@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchPage } from '../src/background/fetcher'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals() })
 
 const htmlResponse = (body: string, type = 'text/html') =>
   new Response(body, { status: 200, headers: { 'content-type': type } })
