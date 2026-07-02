@@ -250,7 +250,15 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
         if (current === ex) current = null
         onRetry()
       })
-      ex.el.replaceChildren(p, retry)
+      const children: HTMLElement[] = [p, retry]
+      if (onRerunSaved) {
+        const rerun = onRerunSaved
+        children.push(button('↻ Regenerate', () => {
+          resetAll()
+          rerun()
+        }))
+      }
+      ex.el.replaceChildren(...children)
       ex.markdown = ''
       // Cancel any frame already registered for this exchange so it can't run
       // later and overwrite the error + Retry UI with empty markdown.
@@ -263,6 +271,7 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
     },
     beginExchange() {
       newExchange('Thinking…')
+      actionsEl.replaceChildren()
       setChatDisabled(true)
     },
     enableChat(onAsk) {

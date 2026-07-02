@@ -1,4 +1,4 @@
-import type { DisplayMessage, SourceInfo, StreamEvent } from '../shared/types'
+import type { DisplayMessage, JobRequest, SourceInfo, StreamEvent } from '../shared/types'
 import { loadSettings } from '../shared/settings'
 import { findResultsAnchor, scrapeSerp } from './serp-selectors'
 import { shouldAutoRun } from './trigger'
@@ -20,7 +20,7 @@ type JobCtx = {
 }
 
 function wirePort(
-  request: object,
+  request: JobRequest,
   panel: Panel,
   handlers: { onDone: () => void; onRetry: () => void },
 ) {

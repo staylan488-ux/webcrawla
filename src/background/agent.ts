@@ -151,7 +151,7 @@ async function executeExchange(opts: {
       }
     }
     emit({ type: 'done' })
-    return { ok: true, answer, finalText: roundText }
+    return { ok: true, answer, finalText: roundText || answer }
   } catch (err) {
     if (abort.signal.aborted) {
       // Time budget exhausted: per spec, abort remaining work and finish with

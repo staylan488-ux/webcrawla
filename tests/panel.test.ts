@@ -221,6 +221,57 @@ describe('createPanel', () => {
     })
   })
 
+  it('beginExchange clears actions so a mid-stream Regenerate cannot be clicked', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const shadow = host.shadowRoot!
+    const actions = () => shadow.querySelector('.actions') as HTMLElement
+
+    panel.setLoading('Reading…')
+    panel.appendToken('summary')
+    panel.finish(vi.fn())
+    expect(actions().querySelector('button')).not.toBeNull()
+
+    panel.addUserMessage('q')
+    panel.beginExchange()
+    expect(actions().querySelector('button')).toBeNull()
+
+    panel.appendToken('a')
+    panel.finish(vi.fn())
+    expect(actions().querySelector('button')).not.toBeNull()
+    expect(actions().textContent).toContain('Regenerate')
+  })
+
+  it('setError keeps both Retry and Regenerate available when a rerun callback is saved', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const shadow = host.shadowRoot!
+    const body = () => shadow.querySelector('.body') as HTMLElement
+
+    let rerunCount = 0
+    panel.setLoading('Reading…')
+    panel.appendToken('summary')
+    panel.finish(() => { rerunCount++ })
+
+    panel.addUserMessage('why?')
+    panel.beginExchange()
+    panel.appendToken('partial')
+    panel.setError('Conversation expired — regenerate to start fresh.', vi.fn())
+
+    const blocks = shadow.querySelectorAll('.body .exchange')
+    expect(blocks).toHaveLength(2)
+    const buttons = Array.from(blocks[1].querySelectorAll('button'))
+    expect(buttons.some(b => b.textContent?.includes('Retry'))).toBe(true)
+    const regenerateBtn = buttons.find(b => b.textContent?.includes('Regenerate')) as HTMLButtonElement
+    expect(regenerateBtn).not.toBeUndefined()
+
+    regenerateBtn.click()
+    expect(rerunCount).toBe(1)
+    expect(body().querySelectorAll('.exchange')).toHaveLength(0)
+  })
+
   it('restore works when destructured off the panel', () => {
     const host = document.createElement('div')
     document.body.append(host)
