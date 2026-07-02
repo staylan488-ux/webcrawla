@@ -1,12 +1,19 @@
 import type { ExtractedSource, SerpResult, Settings, StreamEvent } from '../shared/types'
 import type { ChatMessage, streamChat as streamChatFn } from './llm'
 import { FETCH_PAGE_TOOL, buildSystemPrompt, buildUserMessage } from './prompt'
+import type { ConversationRecord } from './transcript'
 
 export type Emit = (e: StreamEvent) => void
+
+export type TranscriptStore = {
+  load(jobId: string): Promise<ConversationRecord | null>
+  save(rec: ConversationRecord): Promise<void>
+}
 
 export type AgentDeps = {
   fetchAndExtract: (url: string, charBudget: number) => Promise<{ title: string; text: string } | null>
   streamChat: typeof streamChatFn
+  transcripts: TranscriptStore
 }
 
 const MAX_TOOL_ROUNDS = 3
@@ -27,23 +34,34 @@ function parseUrlArg(raw: string): string | null {
   }
 }
 
-export async function runAgent(
-  query: string,
-  results: SerpResult[],
-  settings: Settings,
-  deps: AgentDeps,
-  emit: Emit,
-): Promise<void> {
+type Race = <T>(p: Promise<T>) => Promise<T>
+
+// One complete model exchange: optional preparation (prefetch) inside the time
+// budget, then the capped streaming tool loop. Owns the 45s budget, token
+// bookkeeping, and the done/error emission semantics. Returns the streamed
+// answer text and whether the exchange ended with a `done` event.
+async function executeExchange(opts: {
+  messages: ChatMessage[]
+  sources: ExtractedSource[]
+  settings: Settings
+  deps: AgentDeps
+  emit: Emit
+  // Runs inside the budget before the loop; returns pages already consumed
+  // this exchange (the prefetch count for summaries; omit for follow-ups).
+  prepare?: (race: Race) => Promise<number>
+}): Promise<{ ok: boolean; answer: string }> {
+  const { messages, sources, settings, deps, emit } = opts
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), OVERALL_BUDGET_MS)
   let tokensEmitted = false
+  let answer = ''
 
   // A single lazily-created promise that rejects when the overall time budget is
   // exceeded. Raced against every fetchAndExtract call so a hung fetch can't stall
-  // runAgent forever. Given a no-op catch so an unconsumed rejection (the common case,
-  // since most calls finish before the budget) never surfaces as an unhandled rejection.
+  // the exchange forever. Given a no-op catch so an unconsumed rejection (the common
+  // case, since most calls finish before the budget) never surfaces as unhandled.
   let timeoutPromise: Promise<never> | null = null
-  function budgetRace<T>(p: Promise<T>): Promise<T> {
+  const budgetRace: Race = p => {
     if (!timeoutPromise) {
       timeoutPromise = new Promise<never>((_, reject) => {
         abort.signal.addEventListener('abort', () => reject(new Error('Time budget exceeded.')), { once: true })
@@ -54,37 +72,7 @@ export async function runAgent(
   }
 
   try {
-    emit({ type: 'status', message: 'Reading sources…' })
-    const top = results.slice(0, settings.maxPrefetch)
-    const sources: ExtractedSource[] = await Promise.all(
-      top.map(async (r, i) => {
-        const ex = await budgetRace(deps.fetchAndExtract(r.url, settings.pageCharBudget))
-        const ok = !!ex && ex.text.length >= MIN_USEFUL_CHARS
-        return {
-          index: i + 1,
-          url: r.url,
-          title: ex?.title || r.title,
-          ok,
-          text: ok ? ex!.text : '',
-        }
-      }),
-    )
-
-    if (!sources.some(s => s.ok)) {
-      // snippet-only fallback, labeled via status so the panel can note it
-      top.forEach((r, i) => {
-        sources[i] = { ...sources[i], text: r.snippet, ok: r.snippet.length > 0 }
-      })
-      emit({ type: 'status', message: 'Pages unavailable — summarizing search snippets only' })
-    }
-    emit({ type: 'sources', sources: toInfo(sources) })
-
-    const messages: ChatMessage[] = [
-      { role: 'system', content: buildSystemPrompt(settings.systemPromptOverride || undefined) },
-      { role: 'user', content: buildUserMessage(query, sources) },
-    ]
-
-    let pagesFetched = sources.length
+    let pagesFetched = opts.prepare ? await opts.prepare(budgetRace) : 0
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       // Only offer the tool while rounds remain; the final round is answer-only so
       // the model can't dead-end on a tool call that streams no content.
@@ -98,6 +86,7 @@ export async function runAgent(
         signal: abort.signal,
         onToken: t => {
           tokensEmitted = true
+          answer += t
           emit({ type: 'token', text: t })
         },
       })
@@ -132,19 +121,91 @@ export async function runAgent(
       }
     }
     emit({ type: 'done' })
+    return { ok: true, answer }
   } catch (err) {
     if (abort.signal.aborted) {
       // Time budget exhausted: per spec, abort remaining work and finish with
       // whatever streamed rather than dropping the user's partial answer.
       if (tokensEmitted) {
         emit({ type: 'done' })
-      } else {
-        emit({ type: 'error', message: 'Time budget exceeded before a response could be produced.' })
+        return { ok: true, answer }
       }
+      emit({ type: 'error', message: 'Time budget exceeded before a response could be produced.' })
     } else {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
     }
+    return { ok: false, answer }
   } finally {
     clearTimeout(timer)
+  }
+}
+
+export async function runAgent(
+  jobId: string,
+  query: string,
+  results: SerpResult[],
+  settings: Settings,
+  deps: AgentDeps,
+  emit: Emit,
+): Promise<void> {
+  const sources: ExtractedSource[] = []
+  const messages: ChatMessage[] = []
+
+  const { ok, answer } = await executeExchange({
+    messages,
+    sources,
+    settings,
+    deps,
+    emit,
+    prepare: async race => {
+      emit({ type: 'status', message: 'Reading sources…' })
+      const top = results.slice(0, settings.maxPrefetch)
+      const fetched = await Promise.all(
+        top.map(async (r, i) => {
+          const ex = await race(deps.fetchAndExtract(r.url, settings.pageCharBudget))
+          const okSource = !!ex && ex.text.length >= MIN_USEFUL_CHARS
+          return {
+            index: i + 1,
+            url: r.url,
+            title: ex?.title || r.title,
+            ok: okSource,
+            text: okSource ? ex!.text : '',
+          }
+        }),
+      )
+      sources.push(...fetched)
+
+      if (!sources.some(s => s.ok)) {
+        // snippet-only fallback, labeled via status so the panel can note it
+        top.forEach((r, i) => {
+          sources[i] = { ...sources[i], text: r.snippet, ok: r.snippet.length > 0 }
+        })
+        emit({ type: 'status', message: 'Pages unavailable — summarizing search snippets only' })
+      }
+      emit({ type: 'sources', sources: toInfo(sources) })
+
+      messages.push(
+        { role: 'system', content: buildSystemPrompt(settings.systemPromptOverride || undefined) },
+        { role: 'user', content: buildUserMessage(query, sources) },
+      )
+      return sources.length
+    },
+  })
+
+  if (ok && answer) {
+    messages.push({ role: 'assistant', content: answer })
+    try {
+      await deps.transcripts.save({
+        jobId,
+        query,
+        messages,
+        sources,
+        display: [{ role: 'assistant', markdown: answer }],
+        updatedAt: Date.now(),
+      })
+    } catch {
+      // Non-fatal per spec: the answer already rendered; the conversation just
+      // won't survive a service-worker restart.
+    }
   }
 }

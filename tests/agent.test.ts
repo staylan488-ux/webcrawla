@@ -3,6 +3,11 @@ import { runAgent, type AgentDeps } from '../src/background/agent'
 import { DEFAULT_SETTINGS, type SerpResult, type StreamEvent } from '../src/shared/types'
 import type { streamChat, TurnResult } from '../src/background/llm'
 
+const fakeTranscripts = () => ({
+  load: vi.fn(async () => null),
+  save: vi.fn(async () => {}),
+})
+
 const settings = { ...DEFAULT_SETTINGS, apiKey: 'k', maxPrefetch: 2 }
 const results: SerpResult[] = [
   { title: 'A', url: 'https://a.com', snippet: 'snip a' },
@@ -30,11 +35,13 @@ function chatReturning(...turns: TurnResult[]): typeof streamChat {
 describe('runAgent', () => {
   it('prefetches, emits sources, streams tokens, emits done', async () => {
     const { events, emit } = collect()
+    const transcripts = fakeTranscripts()
     const deps: AgentDeps = {
       fetchAndExtract: vi.fn(okExtract),
       streamChat: chatReturning({ content: 'Answer [1].', toolCalls: [], finishReason: 'stop' }),
+      transcripts,
     }
-    await runAgent('how do heat pumps work', results, settings, deps, emit)
+    await runAgent('job-1', 'how do heat pumps work', results, settings, deps, emit)
     expect(deps.fetchAndExtract).toHaveBeenCalledTimes(2) // maxPrefetch
     const sources = events.find(e => e.type === 'sources')
     expect(sources && sources.type === 'sources' && sources.sources).toHaveLength(2)
@@ -44,6 +51,7 @@ describe('runAgent', () => {
 
   it('executes tool calls and feeds results back', async () => {
     const { events, emit } = collect()
+    const transcripts = fakeTranscripts()
     const chat = chatReturning(
       {
         content: '',
@@ -52,8 +60,8 @@ describe('runAgent', () => {
       },
       { content: 'Deeper answer [3].', toolCalls: [], finishReason: 'stop' },
     )
-    const deps: AgentDeps = { fetchAndExtract: vi.fn(okExtract), streamChat: chat }
-    await runAgent('q about things', results, settings, deps, emit)
+    const deps: AgentDeps = { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }
+    await runAgent('job-1', 'q about things', results, settings, deps, emit)
     expect(deps.fetchAndExtract).toHaveBeenCalledWith('https://c.com', settings.pageCharBudget)
     expect(chat).toHaveBeenCalledTimes(2)
     const calls = (chat as any).mock.calls
@@ -67,33 +75,37 @@ describe('runAgent', () => {
 
   it('stops tool loop after 3 rounds', async () => {
     const { emit } = collect()
+    const transcripts = fakeTranscripts()
     const toolTurn: TurnResult = {
       content: '',
       toolCalls: [{ id: 'x', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://c.com"}' } }],
       finishReason: 'tool_calls',
     }
     const chat = chatReturning(toolTurn, toolTurn, toolTurn, toolTurn, toolTurn)
-    await runAgent('q', results, settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat }, emit)
+    await runAgent('job-1', 'q', results, settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit)
     expect(chat).toHaveBeenCalledTimes(4) // initial + 3 tool rounds
   })
 
   it('falls back to snippets when nothing extracts', async () => {
     const { emit } = collect()
+    const transcripts = fakeTranscripts()
     const chat = chatReturning({ content: 'ok', toolCalls: [], finishReason: 'stop' })
-    await runAgent('q', results, settings, { fetchAndExtract: vi.fn(async () => null), streamChat: chat }, emit)
+    await runAgent('job-1', 'q', results, settings, { fetchAndExtract: vi.fn(async () => null), streamChat: chat, transcripts }, emit)
     const messages = (chat as any).mock.calls[0][0].messages
     expect(messages[1].content).toContain('snip a')
   })
 
   it('emits error event when the LLM call throws', async () => {
     const { events, emit } = collect()
+    const transcripts = fakeTranscripts()
     const chat = vi.fn(async () => { throw new Error('boom 401') }) as unknown as typeof streamChat
-    await runAgent('q', results, settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat }, emit)
+    await runAgent('job-1', 'q', results, settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit)
     expect(events.at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('boom 401') })
   })
 
   it('forces an answer on the final round by omitting tools', async () => {
     const { events, emit } = collect()
+    const transcripts = fakeTranscripts()
     let toolCallCount = 0
     const chat = vi.fn(async (opts: Parameters<typeof streamChat>[0]) => {
       if (opts.tools && (opts.tools as unknown[]).length) {
@@ -109,8 +121,8 @@ describe('runAgent', () => {
       for (const ch of turn.content) opts.onToken?.(ch)
       return turn
     }) as unknown as typeof streamChat
-    const deps: AgentDeps = { fetchAndExtract: vi.fn(okExtract), streamChat: chat }
-    await runAgent('q about things', results, settings, deps, emit)
+    const deps: AgentDeps = { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }
+    await runAgent('job-1', 'q about things', results, settings, deps, emit)
     expect(chat).toHaveBeenCalledTimes(4)
     const calls = (chat as any).mock.calls
     expect(calls[3][0].tools).toBeUndefined()
@@ -123,11 +135,13 @@ describe('runAgent', () => {
     vi.useFakeTimers()
     try {
       const { events, emit } = collect()
+      const transcripts = fakeTranscripts()
       const deps: AgentDeps = {
         fetchAndExtract: vi.fn(() => new Promise(() => {})),
         streamChat: chatReturning({ content: 'unused', toolCalls: [], finishReason: 'stop' }),
+        transcripts,
       }
-      const promise = runAgent('q', results, settings, deps, emit)
+      const promise = runAgent('job-1', 'q', results, settings, deps, emit)
       await vi.advanceTimersByTimeAsync(45_000)
       await promise
       expect(events.at(-1)).toMatchObject({ type: 'error', message: expect.stringMatching(/time|budget/i) })
@@ -138,6 +152,7 @@ describe('runAgent', () => {
 
   it('rejects unknown tool calls without fetching', async () => {
     const { emit } = collect()
+    const transcripts = fakeTranscripts()
     const chat = chatReturning(
       {
         content: '',
@@ -147,7 +162,7 @@ describe('runAgent', () => {
       { content: 'Answer.', toolCalls: [], finishReason: 'stop' },
     )
     const fetchAndExtract = vi.fn(okExtract)
-    await runAgent('q', results, settings, { fetchAndExtract, streamChat: chat }, emit)
+    await runAgent('job-1', 'q', results, settings, { fetchAndExtract, streamChat: chat, transcripts }, emit)
     expect(fetchAndExtract).toHaveBeenCalledTimes(2) // only the two prefetch calls, no tool fetch
     const calls = (chat as any).mock.calls
     const secondMessages = calls[1][0].messages
@@ -157,6 +172,7 @@ describe('runAgent', () => {
 
   it('dedupes fetch_page calls for an already-fetched URL', async () => {
     const { emit } = collect()
+    const transcripts = fakeTranscripts()
     const chat = chatReturning(
       {
         content: '',
@@ -166,11 +182,49 @@ describe('runAgent', () => {
       { content: 'Answer.', toolCalls: [], finishReason: 'stop' },
     )
     const fetchAndExtract = vi.fn(okExtract)
-    await runAgent('q', results, settings, { fetchAndExtract, streamChat: chat }, emit)
+    await runAgent('job-1', 'q', results, settings, { fetchAndExtract, streamChat: chat, transcripts }, emit)
     expect(fetchAndExtract).toHaveBeenCalledTimes(2) // a.com already fetched during prefetch
     const calls = (chat as any).mock.calls
     const secondMessages = calls[1][0].messages
     const toolMsg = secondMessages.find((m: any) => m.role === 'tool' && m.tool_call_id === 't1')
     expect(toolMsg.content).toContain('Already fetched')
+  })
+
+  it('saves the conversation transcript on success', async () => {
+    const { emit } = collect()
+    const transcripts = { load: vi.fn(async () => null), save: vi.fn(async () => {}) }
+    const deps: AgentDeps = {
+      fetchAndExtract: vi.fn(okExtract),
+      streamChat: chatReturning({ content: 'Answer [1].', toolCalls: [], finishReason: 'stop' }),
+      transcripts,
+    }
+    await runAgent('job-1', 'how do heat pumps work', results, settings, deps, emit)
+    expect(transcripts.save).toHaveBeenCalledTimes(1)
+    const rec = (transcripts.save as any).mock.calls[0][0]
+    expect(rec.jobId).toBe('job-1')
+    expect(rec.query).toBe('how do heat pumps work')
+    expect(rec.messages.at(-1)).toEqual({ role: 'assistant', content: 'Answer [1].' })
+    expect(rec.display).toEqual([{ role: 'assistant', markdown: 'Answer [1].' }])
+    expect(rec.sources).toHaveLength(2)
+  })
+
+  it('does not save when the run errors', async () => {
+    const { emit } = collect()
+    const transcripts = { load: vi.fn(async () => null), save: vi.fn(async () => {}) }
+    const chat = vi.fn(async () => { throw new Error('boom') }) as unknown as typeof streamChat
+    await runAgent('job-1', 'q', results, settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit)
+    expect(transcripts.save).not.toHaveBeenCalled()
+  })
+
+  it('a failing save is non-fatal (done already emitted, no throw)', async () => {
+    const { events, emit } = collect()
+    const transcripts = { load: vi.fn(async () => null), save: vi.fn(async () => { throw new Error('quota') }) }
+    const deps: AgentDeps = {
+      fetchAndExtract: vi.fn(okExtract),
+      streamChat: chatReturning({ content: 'ok', toolCalls: [], finishReason: 'stop' }),
+      transcripts,
+    }
+    await expect(runAgent('job-1', 'q', results, settings, deps, emit)).resolves.toBeUndefined()
+    expect(events.at(-1)).toEqual({ type: 'done' })
   })
 })

@@ -4,6 +4,7 @@ import { runAgent, type AgentDeps } from './agent'
 import { extractInOffscreen } from './extract'
 import { fetchPage } from './fetcher'
 import { streamChat } from './llm'
+import { loadConversation, saveConversation } from './transcript'
 
 const deps: AgentDeps = {
   fetchAndExtract: async (url, charBudget) => {
@@ -16,6 +17,7 @@ const deps: AgentDeps = {
     }
   },
   streamChat,
+  transcripts: { load: loadConversation, save: saveConversation },
 }
 
 chrome.runtime.onConnect.addListener(port => {
@@ -39,7 +41,7 @@ chrome.runtime.onConnect.addListener(port => {
     }
     const keepalive = setInterval(() => { void chrome.storage.local.get('keepalive') }, 20_000)
     try {
-      await runAgent(msg.query, msg.results, settings, deps, emit)
+      await runAgent(msg.jobId, msg.query, msg.results, settings, deps, emit)
     } finally {
       clearInterval(keepalive)
     }
