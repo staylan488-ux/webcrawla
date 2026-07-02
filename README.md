@@ -4,6 +4,8 @@ A Chrome MV3 extension (built for Vivaldi, works in any Chromium browser) that i
 
 Unlike a plain "summarize the snippets" tool, Webcrawla does a real crawl: it fetches the top result pages in parallel, extracts their readable text (Mozilla Readability), and streams a grounded, citation-linked answer. The model can call a `fetch_page` tool mid-generation to read more pages when the first batch isn't enough (capped at 3 tool rounds / 8 pages / 45 s).
 
+Every finished overview becomes a conversation: type into the "Ask a follow-up" box to chat with the model about the summary. Follow-ups can crawl additional pages too (same caps per question), citations keep numbering across the conversation, and the chat survives page reloads for the browser session (stored in `chrome.storage.session`, last 5 conversations, gone when the browser closes). Regenerate starts the conversation fresh.
+
 ## Build
 
 ```bash
