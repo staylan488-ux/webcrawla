@@ -6,6 +6,8 @@ Unlike a plain "summarize the snippets" tool, Webcrawla does a real crawl: it fe
 
 Every finished overview becomes a conversation: type into the "Ask a follow-up" box to chat with the model about the summary. Follow-ups can crawl additional pages too (same caps per question), citations keep numbering across the conversation, and the chat survives page reloads for the browser session (stored in `chrome.storage.session`, last 5 conversations, gone when the browser closes). Regenerate starts the conversation fresh.
 
+When the model needs information beyond the crawled sources — typical for follow-up questions — it can call a `web_search` tool (max 2 searches per exchange) and then read the promising results. The search backend is configurable in options: DuckDuckGo's HTML endpoint (free, default) or the Perplexity Search API with your own key.
+
 ## Build
 
 ```bash
@@ -51,3 +53,4 @@ Startpage's result markup is not a public API. Every Startpage-specific selector
 - The API key never leaves `chrome.storage.local` except in the `Authorization` header to your configured endpoint.
 - Model output is rendered through a sanitizing markdown renderer — it never becomes raw HTML, and only `http(s)` URLs may appear in links (including citation links).
 - Fetched pages are size-capped and non-HTML content types are skipped.
+- Search queries are sent to the selected search backend (DuckDuckGo or Perplexity) only when the model invokes `web_search`. The Perplexity key is stored on-device and sent only to api.perplexity.ai.
