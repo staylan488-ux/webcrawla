@@ -159,6 +159,7 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
       p.textContent = message
       body.replaceChildren(p)
       actionsEl.replaceChildren(button('Retry', onRetry))
+      markdown = ''
     },
   }
 }
