@@ -1,5 +1,9 @@
 function escapeHtml(s: string): string {
   return s
+    // Strip C0 control characters (except \n and \t) before anything else so
+    // literal \x01/\x02 bytes in model text can never be mistaken for a
+    // stash placeholder token (see PH_OPEN/PH_CLOSE below).
+    .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -13,10 +17,10 @@ const HTTP_URL = /^https?:\/\//i
 // plain text, never markup they themselves generated (which could contain
 // `[n]`, stray quotes, etc. that would otherwise be reinterpreted). The token
 // is wrapped in ASCII control characters (SOH/STX) that model text can never
-// plausibly contain, so it cannot collide with literal digits in the input.
+// plausibly contain (escapeHtml strips them), so it cannot collide with
+// literal digits in the input.
 const PH_OPEN = '\x01'
 const PH_CLOSE = '\x02'
-const PLACEHOLDER_RE = /\x01(\d+)\x02/g
 
 function stash(html: string, placeholders: string[]): string {
   const i = placeholders.length
@@ -24,8 +28,32 @@ function stash(html: string, placeholders: string[]): string {
   return `${PH_OPEN}${i}${PH_CLOSE}`
 }
 
+// Placeholders can nest (e.g. a stashed anchor whose label contains a stashed
+// code-span placeholder), so a single replacement pass would leave inner
+// tokens un-resolved. Repeat until no tokens remain, bounded so a malformed
+// or forged token can never cause an infinite loop. Any token that still
+// doesn't resolve (out-of-range index, or the loop bound was hit) is dropped
+// rather than rendered as the literal string "undefined".
 function unstash(text: string, placeholders: string[]): string {
-  return text.replace(PLACEHOLDER_RE, (_m, i: string) => placeholders[Number(i)])
+  let s = text
+  const maxIterations = placeholders.length + 1
+  for (let i = 0; i < maxIterations && /\x01\d+\x02/.test(s); i++) {
+    s = s.replace(/\x01(\d+)\x02/g, (_m, idx: string) => {
+      const html = placeholders[Number(idx)]
+      return html === undefined ? '' : html
+    })
+  }
+  return s.replace(/\x01\d+\x02/g, '')
+}
+
+// Applies bold/em to plain text. Used both for the final pass over the whole
+// string and for link labels captured before stashing, so `[**b**](url)`
+// renders bold text inside the anchor without bold/em ever seeing (and
+// mangling) an unstashed href value.
+function emphasize(s: string): string {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
 }
 
 function inline(text: string, citations: Map<number, string>): string {
@@ -34,13 +62,14 @@ function inline(text: string, citations: Map<number, string>): string {
   s = s.replace(/`([^`]+)`/g, (_m, code: string) =>
     stash(`<code>${code}</code>`, placeholders),
   )
-  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>')
   s = s.replace(
     /\[([^\]]+)\]\(([^)]*)\)/g,
     (_m, label: string, url: string) => {
       if (HTTP_URL.test(url)) {
-        return stash(`<a href="${url}" target="_blank" rel="noopener">${label}</a>`, placeholders)
+        return stash(
+          `<a href="${url}" target="_blank" rel="noopener">${emphasize(label)}</a>`,
+          placeholders,
+        )
       }
       return label
     },
@@ -53,6 +82,7 @@ function inline(text: string, citations: Map<number, string>): string {
       placeholders,
     )
   })
+  s = emphasize(s)
   return unstash(s, placeholders)
 }
 

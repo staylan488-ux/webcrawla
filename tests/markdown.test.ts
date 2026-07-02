@@ -56,4 +56,27 @@ describe('renderMarkdown', () => {
     expect(html).toBe('<p><code>[1]</code></p>')
     expect(html).not.toContain('cite')
   })
+  it('does not let bold/em markup inside a url leak into the href attribute', () => {
+    const html = renderMarkdown('[a](https://x.com/**b**)', new Map())
+    expect(html).toContain('href="https://x.com/**b**"')
+    const hrefMatch = html.match(/href="([^"]*)"/)
+    expect(hrefMatch?.[1]).not.toContain('<strong>')
+  })
+  it('resolves nested stash placeholders (code span inside a link label)', () => {
+    const html = renderMarkdown('[`code`](https://x.com)', new Map())
+    expect(html).toBe(
+      '<p><a href="https://x.com" target="_blank" rel="noopener"><code>code</code></a></p>',
+    )
+    expect(html).not.toContain('\x01')
+  })
+  it('renders bold markup inside a link label', () => {
+    const html = renderMarkdown('[**b**](https://x.com)', new Map())
+    expect(html).toContain('<strong>b</strong>')
+  })
+  it('drops forged placeholder tokens instead of interpreting them', () => {
+    const html = renderMarkdown('[good](https://good.com) \x010\x02 and \x0199\x02', new Map())
+    expect(html).not.toContain('\x01')
+    expect(html).not.toContain('undefined')
+    expect(html.match(/<a /g)?.length).toBe(1)
+  })
 })
