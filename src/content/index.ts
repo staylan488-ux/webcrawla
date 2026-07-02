@@ -15,7 +15,7 @@ function getQuery(): string {
 function startJob(query: string, results: ReturnType<typeof scrapeSerp>, panel: Panel) {
   panel.setLoading('Reading sources…')
   const port = chrome.runtime.connect({ name: 'webcrawla' })
-  port.postMessage({ type: 'run', query, results })
+  port.postMessage({ type: 'run', jobId: crypto.randomUUID(), query, results })
   let settled = false
   port.onMessage.addListener((e: StreamEvent) => {
     switch (e.type) {
