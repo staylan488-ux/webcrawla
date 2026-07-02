@@ -49,6 +49,17 @@
   <label for="systemPromptOverride">System prompt override (optional)</label>
   <textarea id="systemPromptOverride" rows="4" placeholder="Leave empty for the built-in prompt"></textarea>
 
+  <label for="searchProvider">Web search backend</label>
+  <select id="searchProvider">
+    <option value="ddg">DuckDuckGo — free, no key needed</option>
+    <option value="perplexity">Perplexity — uses your API key</option>
+  </select>
+  <div class="hint">Used only when the model calls the web_search tool (e.g. follow-ups needing new information).</div>
+
+  <label for="perplexityApiKey">Perplexity API key (optional)</label>
+  <input id="perplexityApiKey" type="password" autocomplete="off">
+  <div class="hint">Only used when Perplexity is selected; stored on this device; sent only to api.perplexity.ai. Empty key falls back to DuckDuckGo.</div>
+
   <button id="save">Save</button><span id="status"></span>
   <script src="options.js"></script>
 </body>

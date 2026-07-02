@@ -25,6 +25,8 @@ export type Settings = {
   maxPrefetch: number
   pageCharBudget: number
   systemPromptOverride: string
+  searchProvider: 'ddg' | 'perplexity'
+  perplexityApiKey: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -35,4 +37,6 @@ export const DEFAULT_SETTINGS: Settings = {
   maxPrefetch: 5,
   pageCharBudget: 8000,
   systemPromptOverride: '',
+  searchProvider: 'ddg',
+  perplexityApiKey: '',
 }

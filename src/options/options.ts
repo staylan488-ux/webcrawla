@@ -12,6 +12,8 @@ async function restore() {
   $<HTMLInputElement>('maxPrefetch').value = String(s.maxPrefetch)
   $<HTMLInputElement>('pageCharBudget').value = String(s.pageCharBudget)
   $<HTMLTextAreaElement>('systemPromptOverride').value = s.systemPromptOverride
+  $<HTMLSelectElement>('searchProvider').value = s.searchProvider
+  $<HTMLInputElement>('perplexityApiKey').value = s.perplexityApiKey
 }
 
 async function save() {
@@ -23,6 +25,8 @@ async function save() {
     maxPrefetch: Math.min(8, Math.max(1, Number($<HTMLInputElement>('maxPrefetch').value) || 5)),
     pageCharBudget: Math.min(30000, Math.max(1000, Number($<HTMLInputElement>('pageCharBudget').value) || 8000)),
     systemPromptOverride: $<HTMLTextAreaElement>('systemPromptOverride').value.trim(),
+    searchProvider: $<HTMLSelectElement>('searchProvider').value as Settings['searchProvider'],
+    perplexityApiKey: $<HTMLInputElement>('perplexityApiKey').value.trim(),
   }
   await saveSettings(patch)
   const status = $<HTMLSpanElement>('status')

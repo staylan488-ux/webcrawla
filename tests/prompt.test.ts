@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FETCH_PAGE_TOOL, buildSystemPrompt, buildUserMessage, formatSource } from '../src/background/prompt'
+import { FETCH_PAGE_TOOL, WEB_SEARCH_TOOL, buildSystemPrompt, buildUserMessage, formatSource } from '../src/background/prompt'
 import type { ExtractedSource } from '../src/shared/types'
 
 const src = (i: number, ok = true): ExtractedSource => ({
@@ -36,5 +36,13 @@ describe('prompt assembly', () => {
     expect(FETCH_PAGE_TOOL.type).toBe('function')
     expect(FETCH_PAGE_TOOL.function.name).toBe('fetch_page')
     expect(FETCH_PAGE_TOOL.function.parameters.required).toContain('url')
+  })
+  it('web_search tool definition is a valid function tool', () => {
+    expect(WEB_SEARCH_TOOL.type).toBe('function')
+    expect(WEB_SEARCH_TOOL.function.name).toBe('web_search')
+    expect(WEB_SEARCH_TOOL.function.parameters.required).toContain('query')
+  })
+  it('system prompt mentions web_search guidance', () => {
+    expect(buildSystemPrompt()).toContain('web_search')
   })
 })

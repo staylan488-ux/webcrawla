@@ -4,6 +4,7 @@ import { runAgent, runFollowup, type AgentDeps } from './agent'
 import { extractInOffscreen } from './extract'
 import { fetchPage } from './fetcher'
 import { streamChat } from './llm'
+import { searchWeb } from './search'
 import { findConversationByQuery, loadConversation, saveConversation } from './transcript'
 
 const deps: AgentDeps = {
@@ -18,6 +19,7 @@ const deps: AgentDeps = {
   },
   streamChat,
   transcripts: { load: loadConversation, save: saveConversation },
+  searchWeb: async () => [],
 }
 
 chrome.runtime.onConnect.addListener(port => {
@@ -39,12 +41,13 @@ chrome.runtime.onConnect.addListener(port => {
       emit({ type: 'error', message: 'Not configured — set your endpoint, API key and model in Webcrawla options.' })
       return
     }
+    const jobDeps: AgentDeps = { ...deps, searchWeb: (q: string) => searchWeb(q, settings) }
     const keepalive = setInterval(() => { void chrome.storage.local.get('keepalive') }, 20_000)
     try {
       if (msg.type === 'run') {
-        await runAgent(msg.jobId, msg.query, msg.results, settings, deps, emit)
+        await runAgent(msg.jobId, msg.query, msg.results, settings, jobDeps, emit)
       } else {
-        await runFollowup(msg.jobId, msg.question, settings, deps, emit)
+        await runFollowup(msg.jobId, msg.question, settings, jobDeps, emit)
       }
     } finally {
       clearInterval(keepalive)

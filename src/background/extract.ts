@@ -1,6 +1,6 @@
 let creating: Promise<void> | null = null
 
-async function ensureOffscreen(): Promise<void> {
+export async function ensureOffscreen(): Promise<void> {
   if (await chrome.offscreen.hasDocument()) return
   if (!creating) {
     creating = chrome.offscreen
