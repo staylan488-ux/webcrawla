@@ -1,6 +1,6 @@
 import type { ExtractedSource, SerpResult, Settings, StreamEvent } from '../shared/types'
 import type { ChatMessage, streamChat as streamChatFn } from './llm'
-import { FETCH_PAGE_TOOL, buildSystemPrompt, buildUserMessage } from './prompt'
+import { FETCH_PAGE_TOOL, WEB_SEARCH_TOOL, buildSystemPrompt, buildUserMessage } from './prompt'
 import type { ConversationRecord } from './transcript'
 
 export type Emit = (e: StreamEvent) => void
@@ -14,10 +14,12 @@ export type AgentDeps = {
   fetchAndExtract: (url: string, charBudget: number) => Promise<{ title: string; text: string } | null>
   streamChat: typeof streamChatFn
   transcripts: TranscriptStore
+  searchWeb: (query: string) => Promise<SerpResult[]>
 }
 
 const MAX_TOOL_ROUNDS = 3
 const MAX_TOTAL_PAGES = 8
+const MAX_SEARCHES = 2
 const OVERALL_BUDGET_MS = 45_000
 const MIN_USEFUL_CHARS = 200
 
@@ -29,6 +31,15 @@ function parseUrlArg(raw: string): string | null {
   try {
     const url = JSON.parse(raw)?.url
     return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null
+  } catch {
+    return null
+  }
+}
+
+function parseQueryArg(raw: string): string | null {
+  try {
+    const q = JSON.parse(raw)?.query
+    return typeof q === 'string' && q.trim() ? q.trim() : null
   } catch {
     return null
   }
@@ -101,6 +112,7 @@ async function executeExchange(opts: {
 
   try {
     let pagesFetched = opts.prepare ? await opts.prepare(budgetRace) : 0
+    let searchesUsed = 0
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       // Only offer the tool while rounds remain; the final round is answer-only so
       // the model can't dead-end on a tool call that streams no content.
@@ -111,7 +123,7 @@ async function executeExchange(opts: {
         apiKey: settings.apiKey,
         model: settings.model,
         messages,
-        ...(offerTools ? { tools: [FETCH_PAGE_TOOL] } : {}),
+        ...(offerTools ? { tools: [FETCH_PAGE_TOOL, WEB_SEARCH_TOOL] } : {}),
         signal: abort.signal,
         onToken: t => {
           tokensEmitted = true
@@ -125,7 +137,28 @@ async function executeExchange(opts: {
       messages.push({ role: 'assistant', content: turn.content || null, tool_calls: turn.toolCalls })
       for (const call of turn.toolCalls) {
         let resultText: string
-        if (call.function.name !== 'fetch_page') {
+        if (call.function.name === 'web_search') {
+          const q = parseQueryArg(call.function.arguments)
+          if (!q) {
+            resultText = 'Error: invalid search query.'
+          } else if (searchesUsed >= MAX_SEARCHES) {
+            resultText = 'Error: search limit reached; work with what you have.'
+          } else {
+            searchesUsed++
+            try {
+              const found = await budgetRace(deps.searchWeb(q))
+              resultText = found.length
+                ? `Search results for "${q}":\n` +
+                  found.map(r => `- ${r.title} — ${r.url}\n  ${r.snippet}`).join('\n')
+                : 'No results found.'
+            } catch (searchErr) {
+              // A budget-abort must propagate to the exchange-level handler;
+              // only genuine provider failures become tool messages.
+              if (abort.signal.aborted) throw searchErr
+              resultText = 'Error: search failed.'
+            }
+          }
+        } else if (call.function.name !== 'fetch_page') {
           resultText = 'Error: unknown tool.'
         } else {
           const url = parseUrlArg(call.function.arguments)

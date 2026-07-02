@@ -16,13 +16,29 @@ export const FETCH_PAGE_TOOL = {
   },
 } as const
 
+export const WEB_SEARCH_TOOL = {
+  type: 'function',
+  function: {
+    name: 'web_search',
+    description:
+      'Search the web for pages relevant to a query. Use when the provided sources cannot answer the question — especially follow-up questions about new aspects — then fetch_page the promising results.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query' },
+      },
+      required: ['query'],
+    },
+  },
+} as const
+
 const SYSTEM_PROMPT = `You are an AI search assistant that writes a grounded overview answering the user's search query, in the style of a search engine AI overview.
 
 Rules:
 - Base your answer ONLY on the numbered sources provided. Cite claims inline with bracketed source numbers like [1] or [2][3].
 - Be concise: 120-250 words. Use markdown. Prefer a short direct answer first, then supporting detail. Use a bullet list only when it genuinely helps.
 - If the sources do not contain enough information to answer, say so plainly rather than guessing.
-- You may call the fetch_page tool to read additional pages (other search results, or links referenced in a source) when the provided content is insufficient. Do not call it when you already have enough.
+- You may call web_search to find pages when the question needs information beyond the provided sources — especially follow-up questions about new aspects — and fetch_page to read search results or links referenced in a source. Prefer searching and reading over telling the user to look elsewhere. Do not call tools when you already have enough.
 - Never invent citations or URLs. Only cite source numbers that exist.`
 
 export function buildSystemPrompt(override?: string): string {
