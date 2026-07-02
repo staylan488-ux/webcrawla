@@ -91,4 +91,86 @@ describe('runAgent', () => {
     await runAgent('q', results, settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat }, emit)
     expect(events.at(-1)).toMatchObject({ type: 'error', message: expect.stringContaining('boom 401') })
   })
+
+  it('forces an answer on the final round by omitting tools', async () => {
+    const { events, emit } = collect()
+    let toolCallCount = 0
+    const chat = vi.fn(async (opts: Parameters<typeof streamChat>[0]) => {
+      if (opts.tools && (opts.tools as unknown[]).length) {
+        toolCallCount++
+        const turn: TurnResult = {
+          content: '',
+          toolCalls: [{ id: `t${toolCallCount}`, type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://c.com"}' } }],
+          finishReason: 'tool_calls',
+        }
+        return turn
+      }
+      const turn: TurnResult = { content: 'Final answer.', toolCalls: [], finishReason: 'stop' }
+      for (const ch of turn.content) opts.onToken?.(ch)
+      return turn
+    }) as unknown as typeof streamChat
+    const deps: AgentDeps = { fetchAndExtract: vi.fn(okExtract), streamChat: chat }
+    await runAgent('q about things', results, settings, deps, emit)
+    expect(chat).toHaveBeenCalledTimes(4)
+    const calls = (chat as any).mock.calls
+    expect(calls[3][0].tools).toBeUndefined()
+    const tokens = events.filter(e => e.type === 'token').map(e => (e as any).text).join('')
+    expect(tokens).toContain('Final answer.')
+    expect(events.at(-1)).toEqual({ type: 'done' })
+  })
+
+  it('emits a timeout error when fetchAndExtract hangs past the time budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const { events, emit } = collect()
+      const deps: AgentDeps = {
+        fetchAndExtract: vi.fn(() => new Promise(() => {})),
+        streamChat: chatReturning({ content: 'unused', toolCalls: [], finishReason: 'stop' }),
+      }
+      const promise = runAgent('q', results, settings, deps, emit)
+      await vi.advanceTimersByTimeAsync(45_000)
+      await promise
+      expect(events.at(-1)).toMatchObject({ type: 'error', message: expect.stringMatching(/time|budget/i) })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects unknown tool calls without fetching', async () => {
+    const { emit } = collect()
+    const chat = chatReturning(
+      {
+        content: '',
+        toolCalls: [{ id: 't1', type: 'function', function: { name: 'evil_tool', arguments: '{"url":"https://c.com"}' } }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'Answer.', toolCalls: [], finishReason: 'stop' },
+    )
+    const fetchAndExtract = vi.fn(okExtract)
+    await runAgent('q', results, settings, { fetchAndExtract, streamChat: chat }, emit)
+    expect(fetchAndExtract).toHaveBeenCalledTimes(2) // only the two prefetch calls, no tool fetch
+    const calls = (chat as any).mock.calls
+    const secondMessages = calls[1][0].messages
+    const toolMsg = secondMessages.find((m: any) => m.role === 'tool' && m.tool_call_id === 't1')
+    expect(toolMsg.content).toBe('Error: unknown tool.')
+  })
+
+  it('dedupes fetch_page calls for an already-fetched URL', async () => {
+    const { emit } = collect()
+    const chat = chatReturning(
+      {
+        content: '',
+        toolCalls: [{ id: 't1', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://a.com"}' } }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'Answer.', toolCalls: [], finishReason: 'stop' },
+    )
+    const fetchAndExtract = vi.fn(okExtract)
+    await runAgent('q', results, settings, { fetchAndExtract, streamChat: chat }, emit)
+    expect(fetchAndExtract).toHaveBeenCalledTimes(2) // a.com already fetched during prefetch
+    const calls = (chat as any).mock.calls
+    const secondMessages = calls[1][0].messages
+    const toolMsg = secondMessages.find((m: any) => m.role === 'tool' && m.tool_call_id === 't1')
+    expect(toolMsg.content).toContain('Already fetched')
+  })
 })

@@ -21,7 +21,7 @@ function toInfo(sources: ExtractedSource[]) {
 function parseUrlArg(raw: string): string | null {
   try {
     const url = JSON.parse(raw)?.url
-    return typeof url === 'string' && /^https?:\/\//.test(url) ? url : null
+    return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null
   } catch {
     return null
   }
@@ -36,12 +36,29 @@ export async function runAgent(
 ): Promise<void> {
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), OVERALL_BUDGET_MS)
+  let tokensEmitted = false
+
+  // A single lazily-created promise that rejects when the overall time budget is
+  // exceeded. Raced against every fetchAndExtract call so a hung fetch can't stall
+  // runAgent forever. Given a no-op catch so an unconsumed rejection (the common case,
+  // since most calls finish before the budget) never surfaces as an unhandled rejection.
+  let timeoutPromise: Promise<never> | null = null
+  function budgetRace<T>(p: Promise<T>): Promise<T> {
+    if (!timeoutPromise) {
+      timeoutPromise = new Promise<never>((_, reject) => {
+        abort.signal.addEventListener('abort', () => reject(new Error('Time budget exceeded.')), { once: true })
+      })
+      timeoutPromise.catch(() => {})
+    }
+    return Promise.race([p, timeoutPromise])
+  }
+
   try {
     emit({ type: 'status', message: 'Reading sources…' })
     const top = results.slice(0, settings.maxPrefetch)
     const sources: ExtractedSource[] = await Promise.all(
       top.map(async (r, i) => {
-        const ex = await deps.fetchAndExtract(r.url, settings.pageCharBudget)
+        const ex = await budgetRace(deps.fetchAndExtract(r.url, settings.pageCharBudget))
         const ok = !!ex && ex.text.length >= MIN_USEFUL_CHARS
         return {
           index: i + 1,
@@ -69,31 +86,46 @@ export async function runAgent(
 
     let pagesFetched = sources.length
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      // Only offer the tool while rounds remain; the final round is answer-only so
+      // the model can't dead-end on a tool call that streams no content.
+      const offerTools = round < MAX_TOOL_ROUNDS
       const turn = await deps.streamChat({
         baseUrl: settings.baseUrl,
         apiKey: settings.apiKey,
         model: settings.model,
         messages,
-        tools: [FETCH_PAGE_TOOL],
+        ...(offerTools ? { tools: [FETCH_PAGE_TOOL] } : {}),
         signal: abort.signal,
-        onToken: t => emit({ type: 'token', text: t }),
+        onToken: t => {
+          tokensEmitted = true
+          emit({ type: 'token', text: t })
+        },
       })
       if (!turn.toolCalls.length || round === MAX_TOOL_ROUNDS) break
 
       messages.push({ role: 'assistant', content: turn.content || null, tool_calls: turn.toolCalls })
       for (const call of turn.toolCalls) {
-        let resultText = 'Error: total page limit reached; answer with what you have.'
-        if (pagesFetched < MAX_TOTAL_PAGES) {
+        let resultText: string
+        if (call.function.name !== 'fetch_page') {
+          resultText = 'Error: unknown tool.'
+        } else {
           const url = parseUrlArg(call.function.arguments)
-          const ex = url ? await deps.fetchAndExtract(url, settings.pageCharBudget) : null
-          if (ex && url) {
-            pagesFetched++
-            const index = sources.length + 1
-            sources.push({ index, url, title: ex.title, ok: true, text: ex.text })
-            emit({ type: 'sources', sources: toInfo(sources) })
-            resultText = `[${index}] ${ex.title} — ${url}\n${ex.text}`
+          const existing = url ? sources.find(s => s.url === url) : undefined
+          if (existing) {
+            resultText = `Already fetched as [${existing.index}].`
+          } else if (pagesFetched >= MAX_TOTAL_PAGES) {
+            resultText = 'Error: total page limit reached; answer with what you have.'
           } else {
-            resultText = 'Error: could not fetch or extract that page.'
+            const ex = url ? await budgetRace(deps.fetchAndExtract(url, settings.pageCharBudget)) : null
+            if (ex && url) {
+              pagesFetched++
+              const index = sources.length + 1
+              sources.push({ index, url, title: ex.title, ok: true, text: ex.text })
+              emit({ type: 'sources', sources: toInfo(sources) })
+              resultText = `[${index}] ${ex.title} — ${url}\n${ex.text}`
+            } else {
+              resultText = 'Error: could not fetch or extract that page.'
+            }
           }
         }
         messages.push({ role: 'tool', content: resultText, tool_call_id: call.id })
@@ -101,7 +133,17 @@ export async function runAgent(
     }
     emit({ type: 'done' })
   } catch (err) {
-    emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+    if (abort.signal.aborted) {
+      // Time budget exhausted: per spec, abort remaining work and finish with
+      // whatever streamed rather than dropping the user's partial answer.
+      if (tokensEmitted) {
+        emit({ type: 'done' })
+      } else {
+        emit({ type: 'error', message: 'Time budget exceeded before a response could be produced.' })
+      }
+    } else {
+      emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
   } finally {
     clearTimeout(timer)
   }
