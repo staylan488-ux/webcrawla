@@ -97,6 +97,14 @@ function renderBlock(block: string, citations: Map<number, string>): string {
   const HEADING_RE = /^(#{1,4})\s+(.*)$/
   const UL_RE = /^\s*[-*]\s+/
   const OL_RE = /^\s*\d+[.)]\s+/
+  const TABLE_ROW_RE = /^\s*\|.*\|\s*$/
+  const SEP_CELL_RE = /^:?-+:?$/
+
+  function parseTableRow(line: string): string[] {
+    const trimmed = line.trim()
+    const inner = trimmed.slice(1, -1)
+    return inner.split('|').map(cell => cell.trim())
+  }
 
   const pieces: string[] = []
   let i = 0
@@ -127,12 +135,47 @@ function renderBlock(block: string, citations: Map<number, string>): string {
       pieces.push(`<ol>${items.join('')}</ol>`)
       continue
     }
+    if (TABLE_ROW_RE.test(line)) {
+      const rows: string[] = []
+      while (i < lines.length && TABLE_ROW_RE.test(lines[i])) {
+        rows.push(lines[i])
+        i++
+      }
+      if (rows.length >= 2) {
+        const secondRowCells = parseTableRow(rows[1])
+        const hasSeparator = secondRowCells.every(cell => SEP_CELL_RE.test(cell))
+        let thead = ''
+        let bodyRows = rows
+        if (hasSeparator) {
+          const headCells = parseTableRow(rows[0])
+          thead = `<thead><tr>${headCells
+            .map(cell => `<th>${inline(cell, citations)}</th>`)
+            .join('')}</tr></thead>`
+          bodyRows = rows.slice(2)
+        }
+        const tbody = `<tbody>${bodyRows
+          .map(
+            row =>
+              `<tr>${parseTableRow(row)
+                .map(cell => `<td>${inline(cell, citations)}</td>`)
+                .join('')}</tr>`,
+          )
+          .join('')}</tbody>`
+        pieces.push(`<table>${thead}${tbody}</table>`)
+        continue
+      }
+      // Fewer than 2 pipe-only lines: fall through and render as a paragraph.
+      const paraLines = rows
+      pieces.push(`<p>${inline(paraLines.join(' '), citations)}</p>`)
+      continue
+    }
     const paraLines: string[] = []
     while (
       i < lines.length &&
       !HEADING_RE.test(lines[i]) &&
       !UL_RE.test(lines[i]) &&
-      !OL_RE.test(lines[i])
+      !OL_RE.test(lines[i]) &&
+      !TABLE_ROW_RE.test(lines[i])
     ) {
       paraLines.push(lines[i])
       i++

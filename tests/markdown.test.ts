@@ -99,4 +99,42 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<h5>H</h5>')
     expect(html).toContain('<sup class="cite">')
   })
+  it('renders a GFM table with a header separator', () => {
+    const html = renderMarkdown('| A | B |\n|---|---|\n| 1 | 2 |', new Map())
+    expect(html).toBe(
+      '<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
+    )
+  })
+  it('treats alignment-colon separators as separators', () => {
+    const html = renderMarkdown('| A | B |\n|:---|---:|\n| 1 | 2 |', new Map())
+    expect(html).toBe(
+      '<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
+    )
+  })
+  it('renders a table preceded by a heading, joined by single newlines', () => {
+    const html = renderMarkdown('### Key\n| A | B |\n|---|---|\n| 1 | 2 |', new Map())
+    expect(html).toBe(
+      '<h5>Key</h5><table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
+    )
+  })
+  it('renders citations and bold inside table cells', () => {
+    const html = renderMarkdown('| **X** [1] |\n|---|\n| y |', new Map([[1, 'https://x.com']]))
+    expect(html).toContain('<strong>X</strong>')
+    expect(html).toContain('<sup class="cite">')
+  })
+  it('escapes raw HTML inside table cells', () => {
+    const html = renderMarkdown('| <script> |\n|---|\n| y |', new Map())
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+  })
+  it('renders all rows in tbody when there is no separator line', () => {
+    const html = renderMarkdown('| A | B |\n| 1 | 2 |', new Map())
+    expect(html).toBe(
+      '<table><tbody><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></tbody></table>',
+    )
+    expect(html).not.toContain('<thead>')
+  })
+  it('renders a lone pipe-containing line without leading/trailing pipes as a paragraph', () => {
+    expect(renderMarkdown('a | b', new Map())).toBe('<p>a | b</p>')
+  })
 })

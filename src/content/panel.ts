@@ -34,6 +34,9 @@ const CSS = `
 .body code { background: rgba(127,127,127,.15); border-radius: 4px; padding: 1px 4px; font-size: 12px; font-family: monospace; }
 .body pre { background: rgba(127,127,127,.12); border-radius: 8px; padding: 10px; overflow-x: auto; }
 .body pre code { background: none; padding: 0; }
+.body table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; max-width: 100%; }
+.body th, .body td { border: 1px solid rgba(127,127,127,.35); padding: 4px 8px; text-align: left; vertical-align: top; }
+.body th { font-weight: 600; background: rgba(127,127,127,.12); }
 sup.cite a { text-decoration: none; font-weight: 600; padding: 0 1px; }
 .user-q { font-weight: 600; margin: 12px 0 6px; padding: 8px 10px; background: rgba(127,127,127,.08); border-radius: 8px; }
 .chatrow { display: flex; gap: 8px; margin-top: 12px; }
