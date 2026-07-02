@@ -93,19 +93,53 @@ function renderBlock(block: string, citations: Map<number, string>): string {
     const code = t.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '')
     return `<pre><code>${escapeHtml(code)}</code></pre>`
   }
-  const heading = t.match(/^(#{1,4})\s+(.*)$/)
-  if (heading && !t.includes('\n')) {
-    const level = Math.min(heading[1].length + 2, 6)
-    return `<h${level}>${inline(heading[2], citations)}</h${level}>`
-  }
   const lines = t.split('\n')
-  if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
-    return `<ul>${lines.map(l => `<li>${inline(l.replace(/^\s*[-*]\s+/, ''), citations)}</li>`).join('')}</ul>`
+  const HEADING_RE = /^(#{1,4})\s+(.*)$/
+  const UL_RE = /^\s*[-*]\s+/
+  const OL_RE = /^\s*\d+[.)]\s+/
+
+  const pieces: string[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    const heading = line.match(HEADING_RE)
+    if (heading) {
+      const level = Math.min(heading[1].length + 2, 6)
+      pieces.push(`<h${level}>${inline(heading[2], citations)}</h${level}>`)
+      i++
+      continue
+    }
+    if (UL_RE.test(line)) {
+      const items: string[] = []
+      while (i < lines.length && UL_RE.test(lines[i])) {
+        items.push(`<li>${inline(lines[i].replace(UL_RE, ''), citations)}</li>`)
+        i++
+      }
+      pieces.push(`<ul>${items.join('')}</ul>`)
+      continue
+    }
+    if (OL_RE.test(line)) {
+      const items: string[] = []
+      while (i < lines.length && OL_RE.test(lines[i])) {
+        items.push(`<li>${inline(lines[i].replace(OL_RE, ''), citations)}</li>`)
+        i++
+      }
+      pieces.push(`<ol>${items.join('')}</ol>`)
+      continue
+    }
+    const paraLines: string[] = []
+    while (
+      i < lines.length &&
+      !HEADING_RE.test(lines[i]) &&
+      !UL_RE.test(lines[i]) &&
+      !OL_RE.test(lines[i])
+    ) {
+      paraLines.push(lines[i])
+      i++
+    }
+    pieces.push(`<p>${inline(paraLines.join(' '), citations)}</p>`)
   }
-  if (lines.every(l => /^\s*\d+[.)]\s+/.test(l))) {
-    return `<ol>${lines.map(l => `<li>${inline(l.replace(/^\s*\d+[.)]\s+/, ''), citations)}</li>`).join('')}</ol>`
-  }
-  return `<p>${inline(t, citations)}</p>`
+  return pieces.join('')
 }
 
 export function renderMarkdown(md: string, citationUrls: Map<number, string>): string {

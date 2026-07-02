@@ -79,4 +79,24 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('undefined')
     expect(html.match(/<a /g)?.length).toBe(1)
   })
+  it('renders a heading followed by a paragraph on the next line', () => {
+    expect(renderMarkdown('### Title\nBody text', new Map())).toBe(
+      '<h5>Title</h5><p>Body text</p>',
+    )
+  })
+  it('renders a heading followed by an ordered list on the next lines', () => {
+    expect(renderMarkdown('### Cycle\n1. one\n2. two', new Map())).toBe(
+      '<h5>Cycle</h5><ol><li>one</li><li>two</li></ol>',
+    )
+  })
+  it('renders an intro paragraph line followed by an unordered list', () => {
+    expect(renderMarkdown('intro line\n- a\n- b', new Map())).toBe(
+      '<p>intro line</p><ul><li>a</li><li>b</li></ul>',
+    )
+  })
+  it('resolves citations inside headings and lists split by single newlines', () => {
+    const html = renderMarkdown('### H\nfact [1]', new Map([[1, 'https://x.com']]))
+    expect(html).toContain('<h5>H</h5>')
+    expect(html).toContain('<sup class="cite">')
+  })
 })
