@@ -16,14 +16,18 @@ function startJob(query: string, results: ReturnType<typeof scrapeSerp>, panel: 
   panel.setLoading('Reading sources…')
   const port = chrome.runtime.connect({ name: 'webcrawla' })
   port.postMessage({ type: 'run', query, results })
+  let settled = false
   port.onMessage.addListener((e: StreamEvent) => {
     switch (e.type) {
       case 'status': panel.setLoading(e.message); break
       case 'sources': panel.setSources(e.sources); break
       case 'token': panel.appendToken(e.text); break
-      case 'done': panel.finish(); port.disconnect(); break
-      case 'error': panel.setError(e.message, () => startJob(query, results, panel)); port.disconnect(); break
+      case 'done': settled = true; panel.finish(() => startJob(query, results, panel)); port.disconnect(); break
+      case 'error': settled = true; panel.setError(e.message, () => startJob(query, results, panel)); port.disconnect(); break
     }
+  })
+  port.onDisconnect.addListener(() => {
+    if (!settled) panel.setError('Connection to the extension was lost.', () => startJob(query, results, panel))
   })
 }
 

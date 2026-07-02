@@ -37,7 +37,12 @@ chrome.runtime.onConnect.addListener(port => {
       emit({ type: 'error', message: 'Not configured — set your endpoint, API key and model in Webcrawla options.' })
       return
     }
-    await runAgent(msg.query, msg.results, settings, deps, emit)
+    const keepalive = setInterval(() => { void chrome.storage.local.get('keepalive') }, 20_000)
+    try {
+      await runAgent(msg.query, msg.results, settings, deps, emit)
+    } finally {
+      clearInterval(keepalive)
+    }
   })
 })
 

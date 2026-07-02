@@ -7,7 +7,7 @@ export type Panel = {
   setLoading(message: string): void
   setSources(sources: SourceInfo[]): void
   appendToken(text: string): void
-  finish(): void
+  finish(onRerun?: () => void): void
   setError(message: string, onRetry: () => void): void
 }
 
@@ -149,9 +149,15 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
       markdown += text
       scheduleRender()
     },
-    finish() {
+    finish(onRerun) {
       render()
       actionsEl.replaceChildren()
+      if (onRerun) {
+        actionsEl.append(button('↻ Regenerate', () => {
+          markdown = ''
+          onRerun()
+        }))
+      }
     },
     setError(message, onRetry) {
       const p = document.createElement('p')

@@ -5,7 +5,7 @@ export async function fetchPage(
   opts: { timeoutMs?: number; maxChars?: number } = {},
 ): Promise<FetchPageResult> {
   const { timeoutMs = 4000, maxChars = 1_500_000 } = opts
-  if (!/^https?:\/\//.test(url)) return { ok: false, error: 'not an http(s) url' }
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'not an http(s) url' }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
