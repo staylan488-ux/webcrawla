@@ -6,8 +6,10 @@ const MAX_RESULTS = 5
 function unwrapDdgRedirect(href: string): string {
   try {
     const url = new URL(href, 'https://duckduckgo.com')
+    // searchParams.get already percent-decodes the value once — a second
+    // decodeURIComponent would corrupt target URLs containing literal %XX.
     const uddg = url.searchParams.get('uddg')
-    if (uddg) return decodeURIComponent(uddg)
+    if (uddg) return uddg
     return href
   } catch {
     return href

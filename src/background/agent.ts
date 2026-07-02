@@ -147,9 +147,12 @@ async function executeExchange(opts: {
             searchesUsed++
             try {
               const found = await budgetRace(deps.searchWeb(q))
+              // Normalize whitespace and cap length so a hostile title/snippet
+              // can't forge extra candidate lines in the tool message.
+              const clean = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 300)
               resultText = found.length
                 ? `Search results for "${q}":\n` +
-                  found.map(r => `- ${r.title} — ${r.url}\n  ${r.snippet}`).join('\n')
+                  found.map(r => `- ${clean(r.title)} — ${r.url}\n  ${clean(r.snippet)}`).join('\n')
                 : 'No results found.'
             } catch (searchErr) {
               // A budget-abort must propagate to the exchange-level handler;
