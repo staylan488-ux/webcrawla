@@ -36,10 +36,37 @@ function parseUrlArg(raw: string): string | null {
 
 type Race = <T>(p: Promise<T>) => Promise<T>
 
+// Finds the last assistant message carrying tool_calls and, if it isn't
+// followed by a matching tool response for every call, splices it (and
+// everything after it) off the end of `messages`. Only the terminal round of
+// an exchange can ever be incomplete — every earlier round fully resolves
+// its tool responses before the next streamChat call is made — so this only
+// ever needs to look at the tail of the array.
+function trimIncompleteToolRound(messages: ChatMessage[]): void {
+  let idx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      idx = i
+      break
+    }
+  }
+  if (idx === -1) return
+  const expected = messages[idx].tool_calls!.length
+  const following = messages.slice(idx + 1).filter(m => m.role === 'tool').length
+  if (following < expected) messages.splice(idx)
+}
+
 // One complete model exchange: optional preparation (prefetch) inside the time
 // budget, then the capped streaming tool loop. Owns the 45s budget, token
-// bookkeeping, and the done/error emission semantics. Returns the streamed
-// answer text and whether the exchange ended with a `done` event.
+// bookkeeping, and the done/error emission semantics. Returns `ok` (whether
+// the exchange ended with a `done` event), `answer` (the full streamed text
+// across every round, for the panel's display markdown), and `finalText`
+// (the text to persist as the terminal assistant message — the terminal
+// round's text alone on normal completion, since intermediate rounds'
+// narration is already captured in their own tool_calls messages; the full
+// streamed `answer` on a mid-round abort, since the terminal round never
+// completed).
 async function executeExchange(opts: {
   messages: ChatMessage[]
   sources: ExtractedSource[]
@@ -49,12 +76,13 @@ async function executeExchange(opts: {
   // Runs inside the budget before the loop; returns pages already consumed
   // this exchange (the prefetch count for summaries; omit for follow-ups).
   prepare?: (race: Race) => Promise<number>
-}): Promise<{ ok: boolean; answer: string }> {
+}): Promise<{ ok: boolean; answer: string; finalText: string }> {
   const { messages, sources, settings, deps, emit } = opts
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), OVERALL_BUDGET_MS)
   let tokensEmitted = false
   let answer = ''
+  let roundText = ''
 
   // A single lazily-created promise that rejects when the overall time budget is
   // exceeded. Raced against every fetchAndExtract call so a hung fetch can't stall
@@ -77,6 +105,7 @@ async function executeExchange(opts: {
       // Only offer the tool while rounds remain; the final round is answer-only so
       // the model can't dead-end on a tool call that streams no content.
       const offerTools = round < MAX_TOOL_ROUNDS
+      roundText = ''
       const turn = await deps.streamChat({
         baseUrl: settings.baseUrl,
         apiKey: settings.apiKey,
@@ -87,6 +116,7 @@ async function executeExchange(opts: {
         onToken: t => {
           tokensEmitted = true
           answer += t
+          roundText += t
           emit({ type: 'token', text: t })
         },
       })
@@ -121,20 +151,22 @@ async function executeExchange(opts: {
       }
     }
     emit({ type: 'done' })
-    return { ok: true, answer }
+    return { ok: true, answer, finalText: roundText }
   } catch (err) {
     if (abort.signal.aborted) {
       // Time budget exhausted: per spec, abort remaining work and finish with
-      // whatever streamed rather than dropping the user's partial answer.
+      // whatever streamed rather than dropping the user's partial answer. The
+      // terminal round never completed, so the full streamed answer (not just
+      // roundText) is what we have to persist as the final assistant turn.
       if (tokensEmitted) {
         emit({ type: 'done' })
-        return { ok: true, answer }
+        return { ok: true, answer, finalText: answer }
       }
       emit({ type: 'error', message: 'Time budget exceeded before a response could be produced.' })
     } else {
       emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
     }
-    return { ok: false, answer }
+    return { ok: false, answer, finalText: answer }
   } finally {
     clearTimeout(timer)
   }
@@ -151,7 +183,7 @@ export async function runAgent(
   const sources: ExtractedSource[] = []
   const messages: ChatMessage[] = []
 
-  const { ok, answer } = await executeExchange({
+  const { ok, answer, finalText } = await executeExchange({
     messages,
     sources,
     settings,
@@ -193,7 +225,11 @@ export async function runAgent(
   })
 
   if (ok && answer) {
-    messages.push({ role: 'assistant', content: answer })
+    // Guard against an abort that landed mid tool-round: an assistant
+    // tool_calls message without a full set of following tool responses is
+    // not valid to replay through an OpenAI-compatible API.
+    trimIncompleteToolRound(messages)
+    messages.push({ role: 'assistant', content: finalText })
     try {
       await deps.transcripts.save({
         jobId,

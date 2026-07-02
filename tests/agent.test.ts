@@ -227,4 +227,69 @@ describe('runAgent', () => {
     await expect(runAgent('job-1', 'q', results, settings, deps, emit)).resolves.toBeUndefined()
     expect(events.at(-1)).toEqual({ type: 'done' })
   })
+
+  it('does not duplicate round content in the persisted transcript', async () => {
+    const { events, emit } = collect()
+    const transcripts = fakeTranscripts()
+    const chat = chatReturning(
+      {
+        content: 'Checking sources. ',
+        toolCalls: [{ id: 't1', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://c.com"}' } }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'Final answer.', toolCalls: [], finishReason: 'stop' },
+    )
+    const deps: AgentDeps = { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }
+    await runAgent('job-1', 'q about things', results, settings, deps, emit)
+
+    const rec = (transcripts.save as any).mock.calls[0][0]
+    expect(rec.messages.at(-1)).toEqual({ role: 'assistant', content: 'Final answer.' })
+    expect(rec.messages.at(-1).content).not.toContain('Checking sources.')
+    const toolCallMsg = rec.messages.find((m: any) => m.role === 'assistant' && m.tool_calls)
+    expect(toolCallMsg.content).toBe('Checking sources. ')
+    expect(rec.display).toEqual([{ role: 'assistant', markdown: 'Checking sources. Final answer.' }])
+    const tokens = events.filter(e => e.type === 'token').map(e => (e as any).text).join('')
+    expect(tokens).toBe('Checking sources. Final answer.')
+  })
+
+  it('trims an incomplete tool round from persisted messages when the time budget aborts mid-round', async () => {
+    vi.useFakeTimers()
+    try {
+      const { events, emit } = collect()
+      const transcripts = fakeTranscripts()
+      const chat = vi.fn(async (opts: Parameters<typeof streamChat>[0]) => {
+        for (const ch of 'Part ') opts.onToken?.(ch)
+        const turn: TurnResult = {
+          content: 'Part ',
+          toolCalls: [
+            { id: 't1', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://c.com"}' } },
+            { id: 't2', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://d.com"}' } },
+          ],
+          finishReason: 'tool_calls',
+        }
+        return turn
+      }) as unknown as typeof streamChat
+      const fetchAndExtract = vi.fn(async (url: string, charBudget: number) => {
+        if (url === 'https://c.com' || url === 'https://d.com') return new Promise<never>(() => {})
+        return okExtract(url)
+      })
+      const deps: AgentDeps = { fetchAndExtract: fetchAndExtract as any, streamChat: chat, transcripts }
+      const promise = runAgent('job-1', 'q about things', results, settings, deps, emit)
+      await vi.advanceTimersByTimeAsync(45_000)
+      await promise
+
+      expect(events.at(-1)).toEqual({ type: 'done' })
+      expect(transcripts.save).toHaveBeenCalledTimes(1)
+      const rec = (transcripts.save as any).mock.calls[0][0]
+      const incompleteToolCallMsgs = rec.messages.filter((m: any, i: number) => {
+        if (m.role !== 'assistant' || !m.tool_calls?.length) return false
+        const following = rec.messages.slice(i + 1).filter((mm: any) => mm.role === 'tool')
+        return following.length < m.tool_calls.length
+      })
+      expect(incompleteToolCallMsgs).toHaveLength(0)
+      expect(rec.messages.at(-1)).toEqual({ role: 'assistant', content: expect.stringContaining('Part') })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
