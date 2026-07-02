@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Webcrawla Settings</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 560px; margin: 32px auto; padding: 0 16px; color: #1a1a1a; }
+    @media (prefers-color-scheme: dark) { body { background: #1e2128; color: #e6e6e6; } input, select, textarea { background: #2a2e37; color: #e6e6e6; border-color: #3a3f4a; } }
+    h1 { font-size: 18px; }
+    label { display: block; margin: 14px 0 4px; font-weight: 600; font-size: 13px; }
+    input, select, textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #c9cdd4; border-radius: 8px; font: inherit; }
+    .hint { font-size: 12px; opacity: .65; margin-top: 3px; }
+    .row { display: flex; gap: 12px; } .row > div { flex: 1; }
+    button { margin-top: 18px; padding: 8px 18px; border-radius: 8px; border: 1px solid #c9cdd4; background: #3367d6; color: #fff; font: inherit; cursor: pointer; }
+    #status { margin-left: 10px; font-size: 13px; color: #188038; }
+  </style>
+</head>
+<body>
+  <h1>✨ Webcrawla Settings</h1>
+  <label for="baseUrl">OpenAI-compatible endpoint base URL</label>
+  <input id="baseUrl" placeholder="https://ollama.com/v1">
+  <div class="hint">Must expose POST /chat/completions. Ollama Cloud: https://ollama.com/v1</div>
+
+  <label for="apiKey">API key</label>
+  <input id="apiKey" type="password" autocomplete="off">
+  <div class="hint">Stored only on this device (chrome.storage.local); sent only to the endpoint above.</div>
+
+  <label for="model">Model name</label>
+  <input id="model" placeholder="glm-5.2">
+
+  <label for="triggerMode">Trigger</label>
+  <select id="triggerMode">
+    <option value="smart">Smart — auto-run on question-like searches</option>
+    <option value="always">Always — every search</option>
+    <option value="manual">Manual — only when I click Summarize</option>
+  </select>
+
+  <div class="row">
+    <div>
+      <label for="maxPrefetch">Pages to prefetch</label>
+      <input id="maxPrefetch" type="number" min="1" max="8">
+    </div>
+    <div>
+      <label for="pageCharBudget">Chars per page</label>
+      <input id="pageCharBudget" type="number" min="1000" max="30000" step="1000">
+    </div>
+  </div>
+
+  <label for="systemPromptOverride">System prompt override (optional)</label>
+  <textarea id="systemPromptOverride" rows="4" placeholder="Leave empty for the built-in prompt"></textarea>
+
+  <button id="save">Save</button><span id="status"></span>
+  <script src="options.js"></script>
+</body>
+</html>
