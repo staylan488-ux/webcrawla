@@ -43,7 +43,7 @@ Expand a finished AI overview card into an inline chat: the user asks follow-up 
 
 ## Content/panel changes
 
-- **`src/content/index.ts`:** generate `jobId` per run; on init, ask background (or storage) whether a conversation exists for the current query — if yes, restore instead of auto-running; `startFollowup(question)` opens a fresh port per exchange (same pattern as `startJob`, incl. disconnect recovery).
+- **`src/content/index.ts`:** generate `jobId` per run; on init, ask the background whether a conversation exists for the current query via a one-shot runtime message `{ target: 'background', kind: 'get-conversation', query }` → `{ jobId, display, sources } | null` (content scripts cannot read `chrome.storage.session` directly — it is trusted-contexts-only by default) — if non-null, restore instead of auto-running; `startFollowup(question)` opens a fresh port per exchange (same pattern as `startJob`, incl. disconnect recovery).
 - **`src/content/panel.ts`:** replace the single markdown accumulator with per-exchange render targets: each exchange owns a DOM block and its accumulator (the summary is exchange 0). Panel API additions: `enableChat(onAsk)`, `addUserMessage(text)`, `beginExchange()` / per-exchange `appendToken`/`finish`/error, `restore(display, sources)`. Citation map shared panel-wide and updated by `sources` events.
 
 ## Error handling
