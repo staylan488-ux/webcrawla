@@ -74,4 +74,13 @@ describe('transcript store', () => {
     await saveConversation(rec('j-new', 'same query', 200))
     expect((await findConversationByQuery('same query'))?.jobId).toBe('j-new')
   })
+
+  it('pruning an old job does not delete a repointed query index', async () => {
+    await saveConversation(rec('j-old', 'same query', 1))
+    await saveConversation(rec('j-new', 'same query', 200))
+    for (let i = 3; i <= 6; i++) await saveConversation(rec(`j${i}`, `query ${i}`, i))
+    expect(await loadConversation('j-old')).toBeNull()
+    expect(await loadConversation('j-new')).not.toBeNull()
+    expect((await findConversationByQuery('same query'))?.jobId).toBe('j-new')
+  })
 })

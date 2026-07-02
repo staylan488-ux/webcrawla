@@ -47,6 +47,11 @@ async function prune(): Promise<void> {
     .sort((a, b) => b.updatedAt - a.updatedAt)
   const stale = jobs.slice(MAX_CONVERSATIONS)
   if (!stale.length) return
-  const keys = stale.flatMap(r => [JOB_PREFIX + r.jobId, QUERY_PREFIX + normalizeQuery(r.query)])
-  await chrome.storage.session.remove(keys)
+  const staleJobKeys = stale.map(r => JOB_PREFIX + r.jobId)
+  const staleQueryKeys: string[] = []
+  for (const r of stale) {
+    const qk = QUERY_PREFIX + normalizeQuery(r.query)
+    if (all[qk] === r.jobId) staleQueryKeys.push(qk)
+  }
+  await chrome.storage.session.remove([...staleJobKeys, ...staleQueryKeys])
 }
