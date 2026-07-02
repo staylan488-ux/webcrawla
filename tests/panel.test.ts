@@ -71,4 +71,87 @@ describe('createPanel', () => {
 
     expect(actions().querySelector('button')).toBeNull()
   })
+
+  it('enableChat renders an input and submits questions', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const asked: string[] = []
+    panel.enableChat(q => asked.push(q))
+    const input = host.shadowRoot!.querySelector('.chatrow input') as HTMLInputElement
+    input.value = '  why though?  '
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect(asked).toEqual(['why though?'])
+    expect(input.value).toBe('')
+  })
+
+  it('follow-up exchanges render independently of the summary', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    panel.setLoading('Reading…')
+    panel.appendToken('SUMMARY')
+    panel.finish()
+    panel.addUserMessage('why?')
+    panel.beginExchange()
+    panel.appendToken('FOLLOWUP')
+    panel.finish()
+    const blocks = host.shadowRoot!.querySelectorAll('.body .exchange')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].textContent).toBe('SUMMARY')
+    expect(blocks[1].textContent).toBe('FOLLOWUP')
+    expect(host.shadowRoot!.querySelector('.user-q')!.textContent).toBe('why?')
+  })
+
+  it('chat input disables during a follow-up stream and re-enables on finish', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    panel.enableChat(() => {})
+    const input = host.shadowRoot!.querySelector('.chatrow input') as HTMLInputElement
+    panel.beginExchange()
+    expect(input.disabled).toBe(true)
+    panel.appendToken('x')
+    panel.finish()
+    expect(input.disabled).toBe(false)
+  })
+
+  it('a follow-up error offers retry inside its exchange and removes the block on retry', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    panel.setLoading('Reading…')
+    panel.appendToken('SUMMARY')
+    panel.finish()
+    panel.addUserMessage('why?')
+    panel.beginExchange()
+    let retried = false
+    panel.setError('boom', () => { retried = true })
+    const blocks = host.shadowRoot!.querySelectorAll('.body .exchange')
+    expect(blocks).toHaveLength(2)
+    const retryBtn = blocks[1].querySelector('button') as HTMLButtonElement
+    retryBtn.click()
+    expect(retried).toBe(true)
+    expect(host.shadowRoot!.querySelectorAll('.body .exchange')).toHaveLength(1)
+    expect(host.shadowRoot!.querySelector('.body')!.textContent).toContain('SUMMARY')
+  })
+
+  it('restore renders a display transcript with working citations', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    panel.restore(
+      [
+        { role: 'assistant', markdown: 'Summary [1].' },
+        { role: 'user', markdown: 'why?' },
+        { role: 'assistant', markdown: 'Because [1].' },
+      ],
+      [{ index: 1, url: 'https://a.com', title: 'A', ok: true }],
+    )
+    const rootEl = host.shadowRoot!
+    expect(rootEl.querySelectorAll('.body .exchange')).toHaveLength(2)
+    expect(rootEl.querySelector('.user-q')!.textContent).toBe('why?')
+    expect(rootEl.querySelectorAll('sup.cite a')).toHaveLength(2)
+    expect(rootEl.querySelectorAll('.sources a')).toHaveLength(1)
+  })
 })
