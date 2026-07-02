@@ -245,3 +245,45 @@ export async function runAgent(
     }
   }
 }
+
+export async function runFollowup(
+  jobId: string,
+  question: string,
+  settings: Settings,
+  deps: AgentDeps,
+  emit: Emit,
+): Promise<void> {
+  const rec = await deps.transcripts.load(jobId)
+  if (!rec) {
+    emit({ type: 'error', message: 'Conversation expired — regenerate to start fresh.' })
+    return
+  }
+
+  // Re-announce current sources so a freshly restored panel has its citation map.
+  emit({ type: 'sources', sources: toInfo(rec.sources) })
+
+  rec.messages.push({ role: 'user', content: question })
+  const { ok, answer, finalText } = await executeExchange({
+    messages: rec.messages,
+    sources: rec.sources,
+    settings,
+    deps,
+    emit,
+  })
+
+  if (ok && answer) {
+    trimIncompleteToolRound(rec.messages)
+    // Reassign rather than mutate in place: the array object was handed to
+    // deps.streamChat by reference, and a test inspects that call's captured
+    // `messages` argument after this function returns — mutating the same
+    // array in place would retroactively "rewrite" what was sent.
+    rec.messages = [...rec.messages, { role: 'assistant', content: finalText }]
+    rec.display.push({ role: 'user', markdown: question }, { role: 'assistant', markdown: answer })
+    rec.updatedAt = Date.now()
+    try {
+      await deps.transcripts.save(rec)
+    } catch {
+      // Non-fatal per spec.
+    }
+  }
+}

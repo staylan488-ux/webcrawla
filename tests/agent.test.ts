@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runAgent, type AgentDeps } from '../src/background/agent'
+import { runAgent, runFollowup, type AgentDeps } from '../src/background/agent'
 import { DEFAULT_SETTINGS, type SerpResult, type StreamEvent } from '../src/shared/types'
 import type { streamChat, TurnResult } from '../src/background/llm'
 
@@ -291,5 +291,95 @@ describe('runAgent', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('runFollowup', () => {
+  const baseRecord = () => ({
+    jobId: 'job-1',
+    query: 'how do heat pumps work',
+    messages: [
+      { role: 'system' as const, content: 'sys' },
+      { role: 'user' as const, content: 'sources + query' },
+      { role: 'assistant' as const, content: 'Summary [1].' },
+    ],
+    sources: [
+      { index: 1, url: 'https://a.com', title: 'A', ok: true, text: 'a text' },
+      { index: 2, url: 'https://b.com', title: 'B', ok: true, text: 'b text' },
+    ],
+    display: [{ role: 'assistant' as const, markdown: 'Summary [1].' }],
+    updatedAt: 100,
+  })
+
+  it('emits error when the conversation is missing', async () => {
+    const { events, emit } = collect()
+    const transcripts = { load: vi.fn(async () => null), save: vi.fn(async () => {}) }
+    const chat = vi.fn() as unknown as typeof streamChat
+    await runFollowup('gone', 'why?', settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit)
+    expect(events).toEqual([{ type: 'error', message: 'Conversation expired — regenerate to start fresh.' }])
+    expect(chat).not.toHaveBeenCalled()
+  })
+
+  it('appends the question, streams the answer, and saves the grown transcript', async () => {
+    const { events, emit } = collect()
+    const transcripts = { load: vi.fn(async () => baseRecord()), save: vi.fn(async () => {}) }
+    const chat = chatReturning({ content: 'Because physics [2].', toolCalls: [], finishReason: 'stop' })
+    await runFollowup('job-1', 'why is it efficient?', settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit)
+
+    // sources re-announced first so a restored panel gets its citation map
+    expect(events[0]).toMatchObject({ type: 'sources' })
+    expect((events[0] as any).sources).toHaveLength(2)
+    // question reached the model
+    const sentMessages = (chat as any).mock.calls[0][0].messages
+    expect(sentMessages.at(-1)).toEqual({ role: 'user', content: 'why is it efficient?' })
+    // streamed and finished
+    expect(events.filter(e => e.type === 'token').map(e => (e as any).text).join('')).toBe('Because physics [2].')
+    expect(events.at(-1)).toEqual({ type: 'done' })
+    // saved with question + answer appended to both transcripts
+    const saved = (transcripts.save as any).mock.calls[0][0]
+    expect(saved.messages.at(-2)).toEqual({ role: 'user', content: 'why is it efficient?' })
+    expect(saved.messages.at(-1)).toEqual({ role: 'assistant', content: 'Because physics [2].' })
+    expect(saved.display.at(-2)).toEqual({ role: 'user', markdown: 'why is it efficient?' })
+    expect(saved.display.at(-1)).toEqual({ role: 'assistant', markdown: 'Because physics [2].' })
+    expect(saved.updatedAt).toBeGreaterThan(100)
+  })
+
+  it('can crawl new pages in a follow-up; sources grow with continued indices', async () => {
+    const { events, emit } = collect()
+    const transcripts = { load: vi.fn(async () => baseRecord()), save: vi.fn(async () => {}) }
+    const chat = chatReturning(
+      {
+        content: '',
+        toolCalls: [{ id: 't1', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://c.com"}' } }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'Deeper [3].', toolCalls: [], finishReason: 'stop' },
+    )
+    const fetchAndExtract = vi.fn(okExtract)
+    await runFollowup('job-1', 'what about costs?', settings, { fetchAndExtract, streamChat: chat, transcripts }, emit)
+    expect(fetchAndExtract).toHaveBeenCalledWith('https://c.com', settings.pageCharBudget)
+    const lastSources = events.filter(e => e.type === 'sources').at(-1) as any
+    expect(lastSources.sources).toHaveLength(3)
+    expect(lastSources.sources[2].index).toBe(3)
+    const saved = (transcripts.save as any).mock.calls[0][0]
+    expect(saved.sources).toHaveLength(3)
+  })
+
+  it('does not save when the follow-up errors', async () => {
+    const { emit } = collect()
+    const transcripts = { load: vi.fn(async () => baseRecord()), save: vi.fn(async () => {}) }
+    const chat = vi.fn(async () => { throw new Error('boom') }) as unknown as typeof streamChat
+    await runFollowup('job-1', 'q2', settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit)
+    expect(transcripts.save).not.toHaveBeenCalled()
+  })
+
+  it('a failing save is non-fatal', async () => {
+    const { events, emit } = collect()
+    const transcripts = { load: vi.fn(async () => baseRecord()), save: vi.fn(async () => { throw new Error('quota') }) }
+    const chat = chatReturning({ content: 'ok', toolCalls: [], finishReason: 'stop' })
+    await expect(
+      runFollowup('job-1', 'q2', settings, { fetchAndExtract: vi.fn(okExtract), streamChat: chat, transcripts }, emit),
+    ).resolves.toBeUndefined()
+    expect(events.at(-1)).toEqual({ type: 'done' })
   })
 })
