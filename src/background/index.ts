@@ -59,17 +59,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return
   }
   if (msg.kind === 'get-conversation' && typeof msg.query === 'string') {
-    void findConversationByQuery(msg.query).then(rec => {
-      sendResponse(
-        rec
-          ? {
-              jobId: rec.jobId,
-              display: rec.display,
-              sources: rec.sources.map(({ text: _text, ...info }) => info),
-            }
-          : null,
-      )
-    })
+    void findConversationByQuery(msg.query)
+      .then(rec => {
+        sendResponse(
+          rec
+            ? {
+                jobId: rec.jobId,
+                display: rec.display,
+                sources: rec.sources.map(({ text: _text, ...info }) => info),
+              }
+            : null,
+        )
+      })
+      .catch(() => sendResponse(null))
     return true // async sendResponse
   }
 })
