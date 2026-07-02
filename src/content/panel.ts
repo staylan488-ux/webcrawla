@@ -98,6 +98,7 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
   let current: Exchange | null = null
   let chatInput: HTMLInputElement | null = null
   let chatHandler: ((q: string) => void) | null = null
+  let onRerunSaved: (() => void) | null = null
 
   const button = (label: string, onClick: () => void) => {
     const b = document.createElement('button')
@@ -146,6 +147,7 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
     chatHandler = null
     current = null
     citations = new Map()
+    onRerunSaved = null
   }
 
   return {
@@ -202,10 +204,12 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
     finish(onRerun) {
       if (current) renderExchange(current)
       actionsEl.replaceChildren()
-      if (onRerun) {
+      const rerun = onRerun ?? onRerunSaved
+      if (rerun) {
+        onRerunSaved = rerun
         actionsEl.append(button('↻ Regenerate', () => {
           resetAll()
-          onRerun()
+          rerun()
         }))
       }
       setChatDisabled(false)

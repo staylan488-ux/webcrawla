@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createPanel } from '../src/content/panel'
 
 describe('createPanel', () => {
@@ -68,6 +68,46 @@ describe('createPanel', () => {
     panel.setLoading('Reading…')
     panel.appendToken('SOME ANSWER')
     panel.finish()
+
+    expect(actions().querySelector('button')).toBeNull()
+  })
+
+  it('Regenerate button survives a follow-up finish()', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const shadow = host.shadowRoot!
+    const actions = () => shadow.querySelector('.actions') as HTMLElement
+
+    panel.setLoading('Reading…')
+    panel.appendToken('summary')
+    panel.finish(vi.fn())
+    panel.addUserMessage('q')
+    panel.beginExchange()
+    panel.setLoading('Thinking…')
+    panel.appendToken('a')
+    panel.finish() // follow-up finish: no arg
+
+    expect(actions().textContent).toContain('Regenerate')
+  })
+
+  it('clicking Regenerate clears the saved callback so a later bare finish() shows no button', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const shadow = host.shadowRoot!
+    const actions = () => shadow.querySelector('.actions') as HTMLElement
+
+    panel.setLoading('Reading…')
+    panel.appendToken('summary')
+    panel.finish(vi.fn())
+
+    const regenerateBtn = actions().querySelector('button') as HTMLButtonElement
+    regenerateBtn.click()
+
+    panel.setLoading('Reading…')
+    panel.appendToken('regenerated')
+    panel.finish() // no arg, and the reset from Regenerate should have cleared the saved callback
 
     expect(actions().querySelector('button')).toBeNull()
   })
