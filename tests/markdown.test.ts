@@ -40,4 +40,20 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('javascript:')
     expect(html).toContain('href="https://ok.com"')
   })
+  it('only allows http(s) urls in citation links', () => {
+    const evilCites = new Map([[1, 'javascript:alert(1)']])
+    const html = renderMarkdown('claim [1]', evilCites)
+    expect(html).not.toContain('javascript:')
+    expect(html).not.toContain('href')
+    expect(html).toContain('[1]')
+  })
+  it('does not let citation regex corrupt a link href generated earlier', () => {
+    const html = renderMarkdown('[a](https://x.com/[1])', cites)
+    expect(html).toBe('<p><a href="https://x.com/[1]" target="_blank" rel="noopener">a</a></p>')
+  })
+  it('leaves [n] literal inside code spans instead of citation-linking it', () => {
+    const html = renderMarkdown('`[1]`', cites)
+    expect(html).toBe('<p><code>[1]</code></p>')
+    expect(html).not.toContain('cite')
+  })
 })
