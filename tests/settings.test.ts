@@ -34,4 +34,10 @@ describe('settings', () => {
     expect(s.apiKey).toBe('sk-1')
     expect(s.model).toBe('other')
   })
+
+  it('defaults include the search provider settings', async () => {
+    const s = await loadSettings()
+    expect(s.searchProvider).toBe('ddg')
+    expect(s.perplexityApiKey).toBe('')
+  })
 })
