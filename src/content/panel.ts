@@ -116,6 +116,12 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
   }
 
   const newExchange = (loadingMessage: string): Exchange => {
+    // If the previous exchange is still an untouched loading block (no content
+    // yet, still shimmering), it has no owner — drop it instead of orphaning it.
+    if (current && current.markdown === '' && current.el.querySelector('.shimmer')) {
+      current.el.remove()
+      current.queued = false
+    }
     const el = document.createElement('div')
     el.className = 'exchange'
     el.append(shimmer(loadingMessage))
@@ -125,6 +131,9 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
   }
 
   const renderExchange = (ex: Exchange) => {
+    // The queued flag gates execution, not just scheduling: a frame registered
+    // before setError (or any DOM replacement) must no-op instead of wiping it.
+    if (!ex.queued) return
     ex.queued = false
     ex.el.innerHTML = renderMarkdown(ex.markdown, citations)
   }
@@ -136,6 +145,39 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
 
   const setChatDisabled = (disabled: boolean) => {
     if (chatInput) chatInput.disabled = disabled
+  }
+
+  // Implementations kept as plain closures (not `this`-bound methods) so they can
+  // be shared by both the public methods and restore() without relying on `this`.
+  const setSourcesImpl = (sources: SourceInfo[]) => {
+    citations = new Map(sources.map(s => [s.index, s.url]))
+    sourcesEl.replaceChildren(
+      ...sources.filter(s => s.ok).map(s => {
+        const a = document.createElement('a')
+        a.href = s.url
+        a.target = '_blank'
+        a.rel = 'noopener'
+        a.title = s.title
+        const img = document.createElement('img')
+        img.src = faviconUrl(s.url)
+        img.alt = ''
+        a.append(img)
+        return a
+      }),
+    )
+    const failed = sources.filter(s => !s.ok).length
+    if (failed) {
+      const note = document.createElement('span')
+      note.textContent = `(${failed} source${failed > 1 ? 's' : ''} unavailable)`
+      sourcesEl.append(note)
+    }
+  }
+
+  const addUserMessageImpl = (text: string) => {
+    const q = document.createElement('div')
+    q.className = 'user-q'
+    q.textContent = text
+    body.append(q)
   }
 
   const resetAll = () => {
@@ -173,27 +215,7 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
       setChatDisabled(true)
     },
     setSources(sources) {
-      citations = new Map(sources.map(s => [s.index, s.url]))
-      sourcesEl.replaceChildren(
-        ...sources.filter(s => s.ok).map(s => {
-          const a = document.createElement('a')
-          a.href = s.url
-          a.target = '_blank'
-          a.rel = 'noopener'
-          a.title = s.title
-          const img = document.createElement('img')
-          img.src = faviconUrl(s.url)
-          img.alt = ''
-          a.append(img)
-          return a
-        }),
-      )
-      const failed = sources.filter(s => !s.ok).length
-      if (failed) {
-        const note = document.createElement('span')
-        note.textContent = `(${failed} source${failed > 1 ? 's' : ''} unavailable)`
-        sourcesEl.append(note)
-      }
+      setSourcesImpl(sources)
     },
     appendToken(text) {
       if (!current) newExchange('')
@@ -202,7 +224,11 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
       scheduleRender(current!)
     },
     finish(onRerun) {
-      if (current) renderExchange(current)
+      if (current) {
+        // Guarantee a final render regardless of any pending/consumed frame.
+        current.queued = true
+        renderExchange(current)
+      }
       actionsEl.replaceChildren()
       const rerun = onRerun ?? onRerunSaved
       if (rerun) {
@@ -226,14 +252,14 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
       })
       ex.el.replaceChildren(p, retry)
       ex.markdown = ''
+      // Cancel any frame already registered for this exchange so it can't run
+      // later and overwrite the error + Retry UI with empty markdown.
+      ex.queued = false
       actionsEl.replaceChildren()
       setChatDisabled(false)
     },
     addUserMessage(text) {
-      const q = document.createElement('div')
-      q.className = 'user-q'
-      q.textContent = text
-      body.append(q)
+      addUserMessageImpl(text)
     },
     beginExchange() {
       newExchange('Thinking…')
@@ -264,10 +290,10 @@ export function createPanel(host: HTMLElement, meta: { model: string; endpointHo
     restore(display, sources) {
       body.replaceChildren()
       current = null
-      this.setSources(sources)
+      setSourcesImpl(sources)
       for (const msg of display) {
         if (msg.role === 'user') {
-          this.addUserMessage(msg.markdown)
+          addUserMessageImpl(msg.markdown)
         } else {
           const el = document.createElement('div')
           el.className = 'exchange'

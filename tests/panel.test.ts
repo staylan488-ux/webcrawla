@@ -176,6 +176,65 @@ describe('createPanel', () => {
     expect(host.shadowRoot!.querySelector('.body')!.textContent).toContain('SUMMARY')
   })
 
+  it('a stale animation frame does not wipe the error + Retry UI', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const shadow = host.shadowRoot!
+    const body = () => shadow.querySelector('.body') as HTMLElement
+
+    // Tokens stream (scheduling a render), then the stream fails mid-flight.
+    panel.setLoading('Reading…')
+    panel.appendToken('X')
+    panel.setError('boom', vi.fn())
+
+    // Flush the animation frame that appendToken already registered.
+    await new Promise(r => requestAnimationFrame(() => r(null)))
+
+    // The error text and the Retry button must survive the stale frame.
+    expect(body().textContent).toContain('boom')
+    const retryBtn = body().querySelector('.exchange button') as HTMLButtonElement
+    expect(retryBtn).not.toBeNull()
+    expect(retryBtn.textContent).toContain('Retry')
+  })
+
+  it('a second beginExchange() drops the orphaned loading block', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const shadow = host.shadowRoot!
+
+    // Finish a summary exchange, then start two exchanges back-to-back.
+    panel.setLoading('Reading…')
+    panel.appendToken('SUMMARY')
+    panel.finish()
+    panel.beginExchange()
+    panel.beginExchange()
+
+    const exchanges = shadow.querySelectorAll('.body .exchange')
+    expect(exchanges).toHaveLength(2)
+
+    // No shimmer should live outside the current (last) exchange.
+    const last = exchanges[exchanges.length - 1]
+    shadow.querySelectorAll('.shimmer').forEach(s => {
+      expect(last.contains(s)).toBe(true)
+    })
+  })
+
+  it('restore works when destructured off the panel', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const panel = createPanel(host, { model: 'm', endpointHost: 'h' })
+    const { restore } = panel
+    expect(() =>
+      restore(
+        [{ role: 'assistant', markdown: 'Summary [1].' }],
+        [{ index: 1, url: 'https://a.com', title: 'A', ok: true }],
+      ),
+    ).not.toThrow()
+    expect(host.shadowRoot!.querySelectorAll('.body .exchange')).toHaveLength(1)
+  })
+
   it('restore renders a display transcript with working citations', () => {
     const host = document.createElement('div')
     document.body.append(host)
