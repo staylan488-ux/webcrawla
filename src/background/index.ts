@@ -40,3 +40,9 @@ chrome.runtime.onConnect.addListener(port => {
     await runAgent(msg.query, msg.results, settings, deps, emit)
   })
 })
+
+chrome.runtime.onMessage.addListener(msg => {
+  if (msg?.target === 'background' && msg.kind === 'open-options') {
+    void chrome.runtime.openOptionsPage()
+  }
+})
