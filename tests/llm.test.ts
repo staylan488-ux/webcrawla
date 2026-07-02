@@ -14,7 +14,9 @@ function sseResponse(events: string[]): Response {
 
 const chunk = (obj: unknown) => `data: ${JSON.stringify(obj)}\n\n`
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('streamChat', () => {
   it('streams content tokens and returns full content', async () => {
@@ -71,5 +73,24 @@ describe('streamChat', () => {
     await expect(
       streamChat({ baseUrl: 'https://ollama.com/v1', apiKey: 'bad', model: 'm', messages: [] }),
     ).rejects.toThrow(/401.*invalid api key/s)
+  })
+
+  it('releases reader lock and propagates stream errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const enc = new TextEncoder()
+          controller.enqueue(enc.encode(chunk({ choices: [{ delta: { content: 'Hel' } }] })))
+          controller.error(new Error('network drop'))
+        },
+      })
+      return new Response(stream, { status: 200 })
+    }))
+    await expect(
+      streamChat({
+        baseUrl: 'https://ollama.com/v1', apiKey: 'k', model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    ).rejects.toThrow('network drop')
   })
 })
