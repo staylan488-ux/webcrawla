@@ -1,4 +1,4 @@
-import type { StreamEvent } from '../shared/types'
+import type { DisplayMessage, JobRequest, SourceInfo, StreamEvent } from '../shared/types'
 import { loadSettings } from '../shared/settings'
 import { findResultsAnchor, scrapeSerp } from './serp-selectors'
 import { shouldAutoRun } from './trigger'
@@ -12,23 +12,70 @@ function getQuery(): string {
   return (params.get('query') ?? params.get('q') ?? '').trim()
 }
 
-function startJob(query: string, results: ReturnType<typeof scrapeSerp>, panel: Panel) {
-  panel.setLoading('Reading sources…')
+type JobCtx = {
+  jobId: string
+  query: string
+  results: ReturnType<typeof scrapeSerp>
+  panel: Panel
+}
+
+function wirePort(
+  request: JobRequest,
+  panel: Panel,
+  handlers: { onDone: () => void; onRetry: () => void },
+) {
   const port = chrome.runtime.connect({ name: 'webcrawla' })
-  port.postMessage({ type: 'run', query, results })
+  port.postMessage(request)
   let settled = false
   port.onMessage.addListener((e: StreamEvent) => {
     switch (e.type) {
       case 'status': panel.setLoading(e.message); break
       case 'sources': panel.setSources(e.sources); break
       case 'token': panel.appendToken(e.text); break
-      case 'done': settled = true; panel.finish(() => startJob(query, results, panel)); port.disconnect(); break
-      case 'error': settled = true; panel.setError(e.message, () => startJob(query, results, panel)); port.disconnect(); break
+      case 'done': settled = true; handlers.onDone(); port.disconnect(); break
+      case 'error': settled = true; panel.setError(e.message, handlers.onRetry); port.disconnect(); break
     }
   })
   port.onDisconnect.addListener(() => {
-    if (!settled) panel.setError('Connection to the extension was lost.', () => startJob(query, results, panel))
+    if (!settled) panel.setError('Connection to the extension was lost.', handlers.onRetry)
   })
+}
+
+function startJob(ctx: JobCtx) {
+  ctx.panel.setLoading('Reading sources…')
+  wirePort({ type: 'run', jobId: ctx.jobId, query: ctx.query, results: ctx.results }, ctx.panel, {
+    onDone: () => {
+      ctx.panel.finish(() => regenerate(ctx))
+      ctx.panel.enableChat(q => startFollowup(ctx, q))
+    },
+    onRetry: () => startJob(ctx),
+  })
+}
+
+function startFollowup(ctx: JobCtx, question: string, isRetry = false) {
+  if (!isRetry) ctx.panel.addUserMessage(question)
+  ctx.panel.beginExchange()
+  wirePort({ type: 'followup', jobId: ctx.jobId, question }, ctx.panel, {
+    onDone: () => ctx.panel.finish(() => regenerate(ctx)),
+    onRetry: () => startFollowup(ctx, question, true),
+  })
+}
+
+function regenerate(ctx: JobCtx) {
+  // Fresh jobId: the old conversation is abandoned; its query-index entry is
+  // overwritten when the new run saves, and the record ages out via pruning.
+  ctx.jobId = crypto.randomUUID()
+  startJob(ctx)
+}
+
+type RestoredConversation = { jobId: string; display: DisplayMessage[]; sources: SourceInfo[] }
+
+async function findRestorable(query: string): Promise<RestoredConversation | null> {
+  try {
+    return (await chrome.runtime.sendMessage({ target: 'background', kind: 'get-conversation', query })) ?? null
+  } catch {
+    return null
+  }
 }
 
 async function init() {
@@ -52,7 +99,19 @@ async function init() {
     panel.setSetup()
     return
   }
-  const run = () => startJob(query, results, panel)
+
+  const ctx: JobCtx = { jobId: crypto.randomUUID(), query, results, panel }
+
+  const restored = await findRestorable(query)
+  if (restored) {
+    ctx.jobId = restored.jobId
+    panel.restore(restored.display, restored.sources)
+    panel.finish(() => regenerate(ctx)) // no active exchange: just Regenerate + chat re-enable
+    panel.enableChat(q => startFollowup(ctx, q))
+    return
+  }
+
+  const run = () => startJob(ctx)
   if (results.length && shouldAutoRun(query, settings.triggerMode)) run()
   else panel.setIdle(run)
 }

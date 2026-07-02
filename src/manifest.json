@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Webcrawla — AI Search Overviews",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BYOK AI answer card for Startpage searches, grounded in a live crawl of the results.",
   "permissions": ["storage", "offscreen"],
   "host_permissions": ["<all_urls>"],

@@ -11,7 +11,11 @@ export type StreamEvent =
   | { type: 'done' }
   | { type: 'error'; message: string }
 
-export type JobRequest = { type: 'run'; query: string; results: SerpResult[] }
+export type JobRequest =
+  | { type: 'run'; jobId: string; query: string; results: SerpResult[] }
+  | { type: 'followup'; jobId: string; question: string }
+
+export type DisplayMessage = { role: 'user' | 'assistant'; markdown: string }
 
 export type Settings = {
   baseUrl: string
